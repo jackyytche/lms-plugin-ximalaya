@@ -1,0 +1,762 @@
+#!/usr/bin/perl
+# pc_stub_test.pl - offline tests for the 0.1.12 pc (desktop-client) channel.
+# Zero network. Covers:
+#   - XimaCrypt::decrypt_url_win against the REAL 2026-08-16 device=win
+#     capture (fixtures_pc.json winvector -> winPlainUrl, golden vector)
+#   - play/v1/show reply parsing (real 2026-09-10 shapes)
+#   - track/quality reply parsing (real 2026-09-10 shape; paid variant)
+#   - pc device triple build + pref persistence (uuid stays stable)
+#   - request wiring: routes, query params, headers (sign/cookie/referer)
+#   - resolveTrack routing: quality -> baseInfo win -> web fallback chain
+#   - Plugin albumHandler fallback: web first, pc page math, hasMore totals
+# Run before every release, together with compile_check.pl.
+use strict;
+use warnings;
+no warnings qw(once redefine);   # test-only typeglob overrides below trip both
+use constant INFOLOG => 0;
+use constant WEBUI  => 1;
+
+# UTF-8 literals below (fixture comparisons); without this pragma the
+# eq comparisons against utf8-flagged decoded JSON would fail.
+use utf8;
+
+use FindBin;
+use lib File::Spec->catdir($FindBin::Bin);
+use lib File::Spec->catdir($FindBin::Bin, 'Plugins', 'Ximalaya');
+
+use JSON::PP ();
+use Encode qw();
+use Slim::Utils::Prefs;   # imports preferences() into main for the test itself
+
+require Slim::Player::ProtocolHandlers;   # stub; ProtocolHandler.pm registers at compile time
+require Plugins::Ximalaya::XimaCrypt;
+require Plugins::Ximalaya::Sign;
+require Plugins::Ximalaya::API;
+require Plugins::Ximalaya::Plugin;
+
+my $fail = 0;
+my $n    = 0;
+sub check {
+	my ($name, $ok) = @_;
+	$n++;
+	$fail++ unless $ok;
+	print($ok ? "ok   - $name\n" : "FAIL - $name\n");
+}
+
+my $api   = 'Plugins::Ximalaya::API';
+my $prefs = preferences('plugin.ximalaya');
+$prefs->init({ cookie => '', quality => 128, albums => '', pc_channel => 1, pc_device_id => '' });
+
+# load fixtures (decoded text, mirroring what from_json hands the parser)
+my $fixfile = File::Spec->catfile($FindBin::Bin, 'fixtures_pc.json');
+open my $fh, '<:encoding(UTF-8)', $fixfile or die "cannot read $fixfile: $!";
+local $/;
+my $fx = JSON::PP->new->decode(<$fh>);
+close $fh;
+
+# ------------------------------------------------------------------ win crypto
+{
+	check('ximacrypt: load selftest', Plugins::Ximalaya::XimaCrypt->selftest_ok);
+
+	my $plain = Plugins::Ximalaya::XimaCrypt->decrypt_url_win(
+		$fx->{winvector}{trackInfo}{playUrlList}[0]{url});
+	check('win: real capture decrypts to the captured PAID_URL',
+		defined $plain && $plain eq $fx->{winPlainUrl});
+
+	check('win: plain http passthrough',
+		Plugins::Ximalaya::XimaCrypt->decrypt_url_win('http://aod.cos.tx.xmcdn.com/x.m4a')
+			eq 'http://aod.cos.tx.xmcdn.com/x.m4a');
+
+	check('win: short garbage -> undef',
+		!defined Plugins::Ximalaya::XimaCrypt->decrypt_url_win('AAAA'));
+
+	check('win: empty input -> undef',
+		!defined Plugins::Ximalaya::XimaCrypt->decrypt_url_win(''));
+}
+
+# ------------------------------------------------------------ device triple
+{
+	$prefs->set('pc_device_id', '');
+	my $ck1 = $api->_pc_device_cookie();
+	my $stored = $prefs->get('pc_device_id') || '';
+	check('device: uuid generated + persisted (v4 shape)',
+		$stored =~ /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+	check('device: cookie format matches the verified triple',
+		$ck1 eq "install_id=$stored; channel=99&100001; 1&_device=win32&$stored&4.0.14");
+	my $ck2 = $api->_pc_device_cookie();
+	check('device: stable across calls (no churn)', $ck2 eq $ck1);
+	$prefs->set('pc_device_id', '01234567-89ab-4cde-8f01-23456789abcd');
+	my $ck3 = $api->_pc_device_cookie();
+	check('device: existing pref value is kept, not regenerated',
+		$ck3 eq 'install_id=01234567-89ab-4cde-8f01-23456789abcd'
+		. '; channel=99&100001; 1&_device=win32&01234567-89ab-4cde-8f01-23456789abcd&4.0.14');
+	$prefs->set('pc_device_id', '');
+}
+
+# ------------------------------------------------------------ enabled gate
+{
+	$prefs->set('pc_channel', 1);
+	check('enabled: pref on + master on', $api->pc_enabled == 1);
+	{
+		local $Plugins::Ximalaya::API::PC_CHANNEL_ENABLED = 0;
+		check('enabled: master switch off wins', $api->pc_enabled == 0);
+	}
+	$prefs->set('pc_channel', 0);
+	check('enabled: user pref off wins', $api->pc_enabled == 0);
+	$prefs->set('pc_channel', 1);
+}
+
+# ------------------------------------------------------------ show parsing
+{
+	my ($tracks, $more, $err) = $api->_parse_show_tracks($fx->{showFree});
+	check('show: parsed 2 tracks, hasMore=1', $tracks && @$tracks == 2 && $more == 1 && !defined $err);
+	check('show: trackId/trackName mapping',
+		$tracks->[0]{id} == 549382127 && $tracks->[0]{title} =~ /西溪的晴雨/);
+	check('show: bare storages cover absolutized',
+		$tracks->[0]{cover} eq 'https://imagev2.xmcdn.com/storages/56b8-audiofreehighqps/27/45/GMCoOScJjrMoAAKtOQKiZobF.jpeg');
+	check('show: protocol-relative cover absolutized',
+		$tracks->[1]{cover} eq 'https://imagev2.xmcdn.com/storages/0cfb-audiofreehighqps/F8/BE/GMCoOR8JYZlTAAKtOQKS8T35.jpeg');
+	check('show: no isPaid in payload -> paid=0', $tracks->[0]{paid} == 0);
+
+	($tracks, $more, $err) = $api->_parse_show_tracks($fx->{showLast});
+	check('show: last page hasMore=0', $tracks && @$tracks == 1 && $more == 0);
+
+	($tracks, $more, $err) = $api->_parse_show_tracks($fx->{showRisk});
+	check('show: soft risk -> (undef, risk)', !defined $tracks && $err eq 'risk');
+	($tracks, $more, $err) = $api->_parse_show_tracks($fx->{showEmpty});
+	check('show: empty payload -> (undef, empty)', !defined $tracks && $err eq 'empty');
+}
+
+# -------------------------------------------------------- quality parsing
+{
+	my ($urls, $meta, $err) = $api->_parse_track_quality($fx->{qualityFree});
+	check('quality: parse ok', defined $urls && !defined $err);
+	check('quality: AacV224 field maps to M4A_24 tier (NOT 224k)',
+		($urls->{M4A_24} || '') eq 'http://aod.cos.tx.xmcdn.com/storages/0071-audiofreehighqps/9A/CB/free_224.m4a');
+	check('quality: MP3_128 absent (hq empty string)', !exists $urls->{MP3_128});
+	check('quality: M4A_64 / MP3_64 / MP3_32 present',
+		$urls->{M4A_64} && $urls->{MP3_64} && $urls->{MP3_32});
+	my $joined = join ' ', values %$urls;
+	# 0.1.18: originPlayPath is now mapped when it is a FULL plaintext URL
+	check('quality: ORIGIN mapped from full plaintext URL',
+		exists $urls->{ORIGIN} && $urls->{ORIGIN} =~ /free_origin\.mp3$/);
+	check('quality: download paths still NOT mapped', $joined !~ /download/);
+	check('quality: meta title/paid/albumId',		$meta->{title} =~ /伊朗打航母/ && $meta->{paid} == 0 && $meta->{albumId} == 81078584);
+
+	($urls, $meta, $err) = $api->_parse_track_quality($fx->{qualityPaid});
+	check('quality: paid reply parses OK with EMPTY url map (success, not error)',
+		defined $urls && !keys %$urls && !defined $err && $meta->{paid} == 1);
+
+	my ($pf) = $api->_parse_track_quality($fx->{qualityFree});
+	my ($u128) = $api->_pick($pf, [qw(MP3_128 M4A_64 MP3_64 M4A_24 MP3_32)]);
+	check('pick: pref 128 skips missing HQ -> M4A_64',
+		($u128 || '') eq 'http://aod.cos.tx.xmcdn.com/storages/b3c0-audiofreehighqps/6D/57/free_164.m4a');
+	my ($u32) = $api->_pick($pf, [qw(MP3_32 M4A_24)]);
+	check('pick: pref 32 -> MP3_32 first',
+		($u32 || '') eq 'http://aod.cos.tx.xmcdn.com/storages/3734-audiofreehighqps/29/E6/free_32.mp3');
+}
+
+# ------------------------------------------------------------- show wiring
+{
+	# zero-network short-circuit with the master switch off
+	{
+		local $Plugins::Ximalaya::API::PC_CHANNEL_ENABLED = 0;
+		my $sign_called = 0;
+		local *Plugins::Ximalaya::Sign::gen = sub { $sign_called = 1 };
+		my ($got, $via);
+		$api->albumTracksShow('12148879', 1, 50,
+			sub { $via = 'cb' },
+			sub { $got = shift; $via = 'ecb' });
+		check('show: master off -> ecb(todo), zero network', $via eq 'ecb' && $got eq 'todo' && !$sign_called);
+	}
+
+	my ($url, $headers);
+	local *Plugins::Ximalaya::Sign::gen = sub {
+		my ($class, $cb, $ecb) = @_;
+		$cb->('STUBSIGN');
+	};
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb) = @_;
+		($url, $headers) = ($u, $h);
+		$cb->($fx->{showFree});
+		return;
+	};
+	my ($tracks, $more, $via);
+	$prefs->set('cookie', '1&_token=test');   # web login cookie for header build
+	$api->albumTracksShow('12148879', 2, 50,
+		sub { $via = 'cb'; ($tracks, $more) = @_; },
+		sub { $via = 'ecb' });
+	check('show: callback path taken', $via eq 'cb');
+	check('show: route + VERIFIED size elasticity (0.1.14 probe: size=50 honored)',
+		$url =~ m{^https://pc\.ximalaya\.com/simple-revision-for-pc/play/v1/show\?id=12148879&num=2&sort=0&size=50&ptype=0$}) if defined $url;
+	check('show: real xm-sign header attached', $headers->{'xm-sign'} eq 'STUBSIGN');
+	check('show: pc album Referer + pc Origin',
+		$headers->{'Referer'} eq 'https://pc.ximalaya.com/album/12148879'
+		&& $headers->{'Origin'} eq 'https://pc.ximalaya.com');
+	my ($id1, $id2) = (($headers->{'Cookie'} || '') =~
+		/^1&_token=test; install_id=([0-9a-f-]{36}); channel=99&100001; 1&_device=win32&([0-9a-f-]{36})&4\.0\.14$/);
+	check('show: cookie = web cookie + device triple (same uuid twice)',
+		defined $id1 && defined $id2 && $id1 eq $id2);
+	check('show: cb gets tracks + hasMore', $tracks && @$tracks == 2 && $more == 1);
+
+	# 0.1.14 probe: server honors 50 but clamps 100 -> client clamps to 50
+	$api->albumTracksShow('12148879', 1, 100,
+		sub { }, sub { });
+	check('show: oversized size clamped to verified max 50',
+		$url =~ m{&size=50&ptype=0$}) if defined $url;
+}
+
+# ---------------------------------------------------------- quality wiring
+{
+	my ($url, $headers);
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb) = @_;
+		($url, $headers) = ($u, $h);
+		$cb->($fx->{qualityFree});
+		return;
+	};
+	my ($urls, $meta, $via);
+	$api->trackQuality('1012852891',
+		sub { $via = 'cb'; ($urls, $meta) = @_; },
+		sub { $via = 'ecb' });
+	check('quality: callback path taken', $via eq 'cb');
+	check('quality: route /track/quality/{id}/{ms_ts}',
+		$url =~ m{^https://mobile\.ximalaya\.com/mobile-playpage/playpage/track/quality/1012852891/\d+$}) if defined $url;
+	check('quality: anonymous exactly as verified (no Cookie, no xm-sign)',
+		!exists $headers->{'Cookie'} && !exists $headers->{'xm-sign'});
+}
+
+# ------------------------------------------------------- resolveTrack chain
+{
+	# URL-keyword routed _json_get stub shared by the chain tests
+	my %routes;    # keyword => [mode, payload]
+	my @hits;
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb) = @_;
+		for my $kw (sort keys %routes) {
+			if (index($u, $kw) >= 0) {
+				my ($mode, $payload) = @{ $routes{$kw} };
+				push @hits, $kw;
+				$mode eq 'cb' ? $cb->($payload) : $ecb->($payload);
+				return;
+			}
+		}
+		die "unexpected URL in test: $u";
+	};
+	local *Plugins::Ximalaya::Sign::gen = sub {
+		my ($class, $cb, $ecb) = @_;
+		$cb->('STUBSIGN');
+	};
+
+	# 1) free track: quality endpoint alone resolves it (no baseInfo call)
+	%routes = ('track/quality' => ['cb', $fx->{qualityFree}]);
+	@hits = ();
+	my ($res, $via);
+	$api->resolveTrack('1012852891',
+		sub { $via = 'cb'; $res = shift; },
+		sub { $via = 'ecb'; $res = shift; });
+	check('resolve: free track -> single quality hit, cb path',
+		$via eq 'cb' && @hits == 1 && $hits[0] eq 'track/quality');
+	check('resolve: free track picks per pref 128 (HQ missing -> M4A_64), m4a',
+		$res && ($res->{url} || '') =~ /free_164\.m4a$/ && $res->{quality} eq 'm4a');
+
+	# 2) paid track: quality returns no plaintext -> baseInfo WIN vector
+	%routes = (
+		'track/quality' => ['cb', $fx->{qualityPaid}],
+		'baseInfo'      => ['cb', $fx->{winvector}],
+	);
+	@hits = ();
+	$api->resolveTrack('759074956',
+		sub { $via = 'cb'; $res = shift; },
+		sub { $via = 'ecb'; $res = shift; });
+	check('resolve: paid track -> quality then baseInfo, cb path',
+		$via eq 'cb' && "@hits" eq 'track/quality baseInfo');
+	check('resolve: paid track URL is the decrypted WIN capture',
+		$res && $res->{url} eq $fx->{winPlainUrl} && $res->{paid} == 1);
+	check('resolve: no duration in capture -> no bitrate published',
+		$res && !exists $res->{bitrate} && !exists $res->{duration});
+
+	# 3) pc chain broken -> blanket web (www2 sbox) fallback, verified vector
+	my $webfx;
+	{
+		open my $wf, '<:encoding(UTF-8)', File::Spec->catfile($FindBin::Bin, 'fixtures.json')
+			or die "cannot read fixtures.json: $!";
+		local $/;
+		$webfx = JSON::PP->new->decode(<$wf>);
+		close $wf;
+	}
+	my $web_url_vec = $webfx->{urls}[0];
+	my $web_baseinfo = {
+		ret       => 0,
+		trackInfo => {
+			trackId     => 3,
+			title       => 'web vector',
+			isPaid      => 0,
+			isAuthorized=> 1,
+			playUrlList => [ { type => 'M4A_64', url => $web_url_vec->{enc} } ],
+		},
+	};
+	%routes = (
+		'track/quality' => ['ecb', 'http'],
+		'baseInfo'      => ['cb', $web_baseinfo],
+	);
+	@hits = ();
+	$api->resolveTrack('1',
+		sub { $via = 'cb'; $res = shift; },
+		sub { $via = 'ecb'; $res = shift; });
+	check('resolve: quality failure falls back to web baseInfo (sbox path)',
+		$via eq 'cb' && "@hits" eq 'track/quality baseInfo');
+	check('resolve: web fallback URL equals the sbox golden plain',
+		defined $res->{url} && Encode::decode_utf8($res->{url}, Encode::FB_CROAK() | Encode::LEAVE_SRC()) eq $web_url_vec->{plain});
+
+	# 4) pc disabled -> straight to web, quality endpoint never touched
+	{
+		local $Plugins::Ximalaya::API::PC_CHANNEL_ENABLED = 0;
+		%routes = ('baseInfo' => ['cb', $fx->{winvector}]);
+		@hits = ();
+		$api->resolveTrack('2',
+			sub { $via = 'cb'; $res = shift; },
+			sub { $via = 'ecb'; $res = shift; });
+		check('resolve: pc off -> web only, zero quality requests',
+			$via eq 'cb' && "@hits" eq 'baseInfo');
+	}
+
+	# ------------------------------------------------ 0.1.18 quality ladder
+	# 5) pref 256 free track: ORIGIN (full plaintext URL) is the top pick
+	{
+		$prefs->set('quality', 256);
+		%routes = ('track/quality' => ['cb', $fx->{qualityFree}]);
+		@hits = ();
+		$api->resolveTrack('1012852891',
+			sub { $via = 'cb'; $res = shift; },
+			sub { $via = 'ecb'; $res = shift; });
+		check('quality: pref 256 free track picks ORIGIN upload',
+			$via eq 'cb' && ($res->{url} || '') =~ /free_origin\.mp3$/);
+		$prefs->set('quality', 128);
+	}
+
+	# bare-storages originPlayPath (VIP replies) must NOT be mapped
+	{
+		my ($u2) = $api->_parse_track_quality({
+			ret => 0,
+			data => { debugInfo => { debugDetailMap => { detailTrackDto => { result => {
+				isPaid => 1,
+				title  => 'bare origin',
+				playPathDto => {
+					originPlayPath  => 'storages/3ecc-x/Y.mp3',
+					playPathAacV164 => 'http://aod.cos.tx.xmcdn.com/storages/a/ok.m4a',
+				},
+			} } } } } });
+		check('quality: bare storages originPlayPath dropped, plaintext kept',
+			$u2 && !exists $u2->{ORIGIN} && ($u2->{M4A_64} || '') =~ /ok\.m4a$/);
+	}
+
+	# 6) pref 256 paid track: level 3 is entitlement-gated (ret 1001) ->
+	#    automatic one-step fallback to level 2 (M4A_128 tier present)
+	{
+		$prefs->set('quality', 256);
+		my @urls_seen;
+		my $lvl2_payload = {
+			ret       => 0,
+			trackInfo => {
+				trackId => 759074956, title => 'lvl2', isPaid => 1, isAuthorized => 1,
+				duration => 624,
+				coverLarge => 'http://imagev2.xmcdn.com/storages/l2/cover_large.jpg',
+				playUrlList => [
+					{ type => 'M4A_128', qualityLevel => 2, url => 'http://aod.cos.tx.xmcdn.com/storages/l2/track_128.m4a', fileSize => 7555956 },
+					{ type => 'M4A_64',  qualityLevel => 1, url => $fx->{winvector}{trackInfo}{playUrlList}[0]{url} },
+				],
+			},
+		};
+		local *Plugins::Ximalaya::API::_json_get = sub {
+			my ($class, $u, $h, $cb, $ecb) = @_;
+			if ($u =~ /mobile-playpage\/playpage\/track\/quality/) {
+				$cb->($fx->{qualityPaid});    # no plaintext -> win chain
+				return;
+			}
+			push @urls_seen, $u if $u =~ /baseInfo/;
+			if ($u =~ /trackQualityLevel=3/) { $cb->({ ret => 1001 }); return; }
+			if ($u =~ /trackQualityLevel=2/) { $cb->($lvl2_payload); return; }
+			die "unexpected URL in test: $u";
+		};
+		@hits = ();
+		$api->resolveTrack('759074956',
+			sub { $via = 'cb'; $res = shift; },
+			sub { $via = 'ecb'; $res = shift; });
+		check('quality: pref 256 paid track level 3 gated -> falls back to level 2',
+			$via eq 'cb' && ($res->{url} || '') =~ /track_128\.m4a$/);
+		check('quality: bitrate computed from fileSize/duration (96k for the 128 tier)',
+			$res && $res->{duration} == 624
+			&& $res->{bitrate} == int(7555956 * 8 / 624));
+		check('quality: coverLarge passed through and https-ized',
+			$res && ($res->{cover} || '') eq 'https://imagev2.xmcdn.com/storages/l2/cover_large.jpg');
+		check('quality: fallback requested level 3 then level 2',
+			@urls_seen == 2
+			&& $urls_seen[0] =~ /trackQualityLevel=3/
+			&& $urls_seen[1] =~ /trackQualityLevel=2/);
+		# level parameter is clamped/passed verbatim for plain 128 too
+		$prefs->set('quality', 128);
+		@urls_seen = ();
+		%routes = (
+			'track/quality' => ['cb', $fx->{qualityPaid}],
+			'baseInfo'      => ['cb', $fx->{winvector}],
+		);
+		$api->resolveTrack('759074956',
+			sub { $via = 'cb'; $res = shift; },
+			sub { $via = 'ecb'; $res = shift; });
+		check('quality: pref 128 requests trackQualityLevel=2',
+			$via eq 'cb' && @urls_seen == 1 && $urls_seen[0] =~ /trackQualityLevel=2/);
+		$prefs->set('quality', 128);
+	}
+}
+
+# ------------------------------------------------- Plugin albumHandler chain
+# 0.1.16: mobile list FIRST (paid/VIP albums: exact totalCount + isPaid in
+# one shot), its EMPTY reply (typical free album) falls to pc show (hasMore
+# estimate), then web. Cooldown families: tracks_mobile / tracks /
+# tracks_web. Single id-routed stub trio (no local re-overrides):
+#   mobile: 555/999 -> ecb('empty') (free album, no cooling);
+#           else    -> page1 ([2 tracks, first paid], total=1388)
+#   pc:     555/999 -> fail('empty');  777 -> last page ([1], hasMore=0);
+#           else    -> page1 ([2 tracks], hasMore=1)
+#   web:    999     -> fail('1005');   else -> success ([1 track], total=1388)
+# NOTE: cooldown-planting tests must stay in the LAST block below.
+{
+	$prefs->set('quality', 128);
+	$prefs->set('mobile_channel', 1);   # initPlugin default (stub env skips init)
+	my @calls;
+	local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, "mobile:$albumId:$page";
+		if ($albumId == 555 || $albumId == 777 || $albumId == 888 || $albumId == 999) { $ecb->('empty'); return; }
+		$cb->([
+			{ id => 759074956, title => 'm1', paid => 1, cover => '' },
+			{ id => 759074957, title => 'm2', paid => 0, cover => '' },
+		], 1388);
+	};
+	local *Plugins::Ximalaya::API::albumTracksShow = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, "pc:$albumId:$page";
+		if ($albumId == 555 || $albumId == 999) { $ecb->('empty'); return; }
+		if ($albumId == 777) { $cb->([ { id => 9, title => 'last', paid => 0, cover => '' } ], 0); return; }
+		$cb->([
+			{ id => 1, title => 't1', paid => 0, cover => '' },
+			{ id => 2, title => 't2', paid => 0, cover => '' },
+		], 1);
+	};
+	local *Plugins::Ximalaya::API::albumTracks = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, "web:$albumId:$page:$size";
+		if ($albumId == 999) { $ecb->('1005'); return; }
+		$cb->([ { id => 5, title => 'vip track', paid => 1, cover => '' } ], 1388);
+	};
+
+	my ($out, $client) = ({}, bless({}, 'StubClient'));
+
+	# VIP album: mobile one-shot list + EXACT total (no pc, no web, no meta)
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 83701277);
+	check('album: VIP album served by mobile list, one request',
+		"@calls" eq 'mobile:83701277:1' && $out->{offset} == 0
+		&& @{ $out->{items} || [] } == 2);
+	check('album: EXACT total=1388 from mobile totalCount (page count right from page 1)',
+		$out->{total} == 1388);
+	check('album: per-track isPaid restored ([VIP] prefix on mobile data)',
+		($out->{items}[0]{name} || '') =~ /^\[VIP\]/ && ($out->{items}[1]{name} || '') !~ /VIP/);
+
+	# page math still UI-width: index=50 -> page 2, offset 50, numbering 51
+	# (m1 is paid -> [VIP] prefix precedes the number)
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 50, quantity => 50 }, 83701277);
+	check('album: mobile page 2 at offset 50, numbering starts at 51',
+		"@calls" eq 'mobile:83701277:2' && $out->{offset} == 50
+		&& ($out->{items}[0]{name} || '') =~ /^\[VIP\] 51\./ && $out->{total} == 1388);
+
+	# free album: mobile empty -> pc fail -> web success (quantity page math)
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 555);
+	check('album: free album + pc failure falls through to web',
+		"@calls" eq 'mobile:555:1 pc:555:1 web:555:1:50'
+		&& $out->{offset} == 0 && @{ $out->{items} || [] } == 1 && $out->{total} == 1388);
+
+	# free album served by pc show: hasMore=1 -> estimate off+n+qty (52)
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 888);
+	check('album: free album (mobile empty) served by pc show, estimate total',
+		"@calls" eq 'mobile:888:1 pc:888:1' && $out->{total} == 52);
+
+	# free album last pc page: hasMore=0 -> exact off+n (1)
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 777);
+	check('album: free album last pc page -> exact total (off+n=1)',
+		$out->{total} == 1 && "@calls" eq 'mobile:777:1 pc:777:1');
+
+	# all three paths failing -> single error item (no dead feed)
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 999);
+	check('album: mobile+pc+web failure surfaces one error item',
+		"@calls" eq 'mobile:999:1 pc:999:1 web:999:1:50'
+		&& $out->{items} && @{ $out->{items} } == 1 && $out->{items}[0]{type} eq 'text');
+
+	# pc off -> web-only (pre-0.1.12 behaviour), mobile+pc never touched
+	{
+		$prefs->set('pc_channel', 0);
+		@calls = ();
+		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+			{ index => 0, quantity => 50 }, 83701277);
+		check('album: pc off -> web only, web success path intact',
+			"@calls" eq 'web:83701277:1:50' && $out->{total} == 1388);
+		$prefs->set('pc_channel', 1);
+	}
+
+	# 0.1.17: user pref mobile_channel off -> straight to pc show (estimate)
+	{
+		$prefs->set('mobile_channel', 0);
+		@calls = ();
+		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+			{ index => 0, quantity => 50 }, 83701277);
+		check('album: mobile pref off -> straight to pc (no mobile call)',
+			"@calls" eq 'pc:83701277:1' && $out->{total} == 52
+			&& Plugins::Ximalaya::API->mobile_enabled == 0);
+		$prefs->set('mobile_channel', 1);
+		check('album: mobile pref restored -> enabled again',
+			Plugins::Ximalaya::API->mobile_enabled == 1);
+	}
+
+	# ------------------------------------------------ ProtocolHandler metadata
+	{
+		Plugins::Ximalaya::ProtocolHandler->cache_metadata('xmly://track/759074956', {
+			title => 't', cover => 'https://imagev2.xmcdn.com/storages/x/cover.jpg',
+			duration => 624, bitrate => 96845, quality => 'm4a',
+		});
+		my $m = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://track/759074956');
+		check('handler: getMetadataFor embeds rate into type string',
+			$m && $m->{type} eq 'AAC 96kbps' && $m->{bitrate} eq '96kbps CBR'
+			&& $m->{duration} == 624 && $m->{cover} =~ /cover\.jpg$/);
+		my $e = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://track/none');
+		check('handler: unknown url -> empty metadata', $e && !scalar keys %$e);
+	}
+}
+
+# -------------------------------------------- mobile track list (0.1.16)
+{
+	# parser: VIP shape -> tracks + EXACT total; empty -> (undef,undef,empty)
+	my ($tracks, $total, $err) = $api->_parse_mobile_tracks($fx->{mobileTrack});
+	check('mobile: parsed 2 tracks + EXACT totalCount (1388)',
+		$tracks && @$tracks == 2 && $total == 1388 && !defined $err);
+	check('mobile: trackId/title/isPaid mapping',
+		$tracks->[0]{id} == 759074956 && $tracks->[0]{title} eq '第001集 VIP'
+		&& $tracks->[0]{paid} == 1 && $tracks->[1]{paid} == 0);
+	check('mobile: http cover upgraded to https',
+		$tracks->[0]{cover} eq 'https://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E1/GKwRIasMxSA5AA.jpg');
+	($tracks, $total, $err) = $api->_parse_mobile_tracks($fx->{mobileEmpty});
+	check('mobile: empty list (free album) -> (undef, undef, empty)',
+		!defined $tracks && !defined $total && $err eq 'empty');
+
+	# wiring: URL/pageId/pageSize/order=0 + 30min cache + exact-total cb
+	{
+		my ($url, $expires, $via, $got_total);
+		local *Plugins::Ximalaya::API::_json_get = sub {
+			my ($class, $u, $h, $cb, $ecb, $cache) = @_;
+			($url, $expires) = ($u, $cache);
+			$cb->($fx->{mobileTrack});
+			return;
+		};
+		$api->albumTracksMobile('83701277', 2, 50,
+			sub { $via = 'cb'; (undef, $got_total) = @_; },
+			sub { $via = 'ecb' });
+		check('mobile: route pageId=2&pageSize=50&order=0 + 30min cache + cb(list,total)',
+			$via eq 'cb' && $got_total == 1388 && $expires eq '30min'
+			&& $url =~ m{^https://mobile\.ximalaya\.com/mobile/v1/album/track\?albumId=83701277&pageId=2&pageSize=50&order=0$}) if defined $url;
+	}
+}
+
+# --------------------------------------------------------------- rank parsing
+{
+	my ($tabs, $err) = $api->_parse_rank_tabs($fx->{rankTabs});
+	check('rankTabs: parsed 2 tabs, position order kept',
+		$tabs && @$tabs == 2 && $tabs->[0]{name} eq '全站' && $tabs->[1]{name} eq '相声评书');
+	check('rankTabs: channel ranks mapped with rankingId',
+		@{ $tabs->[0]{ranks} } == 3 && $tabs->[0]{ranks}[0]{rankingId} == 100006
+		&& $tabs->[0]{ranks}[1]{name} eq '免费' && $tabs->[1]{ranks}[1]{rankingId} == 100090);
+	($tabs, $err) = $api->_parse_rank_tabs($fx->{rankTabsEmpty});
+	check('rankTabs: empty payload -> (undef, empty)', !defined $tabs && $err eq 'empty');
+
+	my ($albums, $ccode, $err2) = $api->_parse_rank_albums($fx->{rankElement});
+	check('rankElement: parsed 2 albums (parser layer, method adds total)',
+		$albums && @$albums == 2 && !defined $err2);
+	check('rankElement: authoritative categoryCode harvested (youshengshu)',
+		$ccode eq 'youshengshu');
+	check('rankElement: title/announcer/tracksCount mapping',
+		$albums->[0]{id} == 108239077 && $albums->[0]{announcer} eq '头陀渊讲故事'
+		&& $albums->[0]{tracksCount} == 1183);
+	check('rankElement: isPaid + isFinished flags',
+		$albums->[0]{paid} == 1 && $albums->[0]{finished} == 1
+		&& $albums->[1]{paid} == 0 && $albums->[1]{finished} == 0);
+	check('rankElement: bare storages cover absolutized',
+		$albums->[0]{cover} eq 'https://imagev2.xmcdn.com/storages/f5df-audiofreehighqps/96/70/GKwRIasMxSA5AAnJrQQizkhE.jpeg');
+	($albums, $ccode, $err2) = $api->_parse_rank_albums($fx->{rankElementEmpty});
+	check('rankElement: empty chart -> (undef, undef, empty)',
+		!defined $albums && !defined $ccode && $err2 eq 'empty');
+}
+
+# --------------------------------------------------------------- rank wiring
+{
+	# master-switch off -> zero network todo
+	{
+		local $Plugins::Ximalaya::API::PC_CHANNEL_ENABLED = 0;
+		my $sign_called = 0;
+		local *Plugins::Ximalaya::Sign::gen = sub { $sign_called = 1 };
+		my ($got, $via);
+		$api->rankTabs(sub { $via = 'cb' }, sub { $got = shift; $via = 'ecb' });
+		check('rank: master off -> ecb(todo), zero network', $via eq 'ecb' && $got eq 'todo' && !$sign_called);
+	}
+
+	my ($url, $headers, $expires);
+	local *Plugins::Ximalaya::Sign::gen = sub {
+		my ($class, $cb, $ecb) = @_;
+		$cb->('STUBSIGN');
+	};
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb, $cache) = @_;
+		($url, $headers, $expires) = ($u, $h, $cache);
+		$cb->($fx->{rankTabs});
+		return;
+	};
+	my ($tabs, $via);
+	$api->rankTabs(sub { $via = 'cb'; $tabs = shift; }, sub { $via = 'ecb' });
+	check('rank: tabs callback path, 1h HTTP cache',
+		$via eq 'cb' && $tabs && @$tabs == 2 && $expires eq '1h');
+	check('rank: rankTabs route + sceneId=1 + sign + pc referer',
+		$url =~ m{^https://pc\.ximalaya\.com/simple-revision-for-pc/rank/v4/rankTabs\?sceneId=1$}
+		&& $headers->{'xm-sign'} eq 'STUBSIGN'
+		&& $headers->{'Referer'} eq 'https://pc.ximalaya.com/') if defined $url;
+
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb, $cache) = @_;
+		($url, $headers, $expires) = ($u, $h, $cache);
+		$cb->($fx->{rankElement});
+		return;
+	};
+	my ($albums, $total, $ccode);
+	$api->rankAlbums('100006', sub { $via = 'cb'; ($albums, $total, $ccode) = @_; }, sub { $via = 'ecb' });
+	check('rank: element route + rankingId + 30min cache + cb(albums,total,code)',
+		$via eq 'cb' && $total == 2 && $ccode eq 'youshengshu'
+		&& $url =~ m{^https://pc\.ximalaya\.com/simple-revision-for-pc/rank/v4/element\?rankingId=100006$}
+		&& $expires eq '30min') if defined $url;
+}
+
+# --------------------------------------------------- Categories menu routing
+{
+	require Plugins::Ximalaya::Categories;
+	local *Plugins::Ximalaya::API::rankTabs = sub {
+		my ($class, $cb, $ecb) = @_;
+		my ($tabs) = $api->_parse_rank_tabs($fx->{rankTabs});
+		$cb->($tabs);
+	};
+
+	my ($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories->feed($client, sub { $out = shift });
+	check('menu: top feed lists channels from rankTabs',
+		@{ $out->{items} || [] } == 2
+		&& $out->{items}[0]{name} eq '全站' && $out->{items}[1]{name} eq '相声评书');
+
+	Plugins::Ximalaya::Categories::tabFeed($client, sub { $out = shift }, {}, 1);
+	check('menu: tab feed lists charts of channel 1',
+		@{ $out->{items} || [] } == 3
+		&& $out->{items}[0]{name} eq '热播' && $out->{items}[2]{name} eq 'VIP');
+
+	local *Plugins::Ximalaya::API::rankAlbums = sub {
+		my ($class, $rankingId, $cb, $ecb) = @_;
+		my ($albums, $ccode) = $api->_parse_rank_albums($fx->{rankElement});
+		$cb->($albums, scalar @$albums, $ccode);
+	};
+	Plugins::Ximalaya::Categories::rankFeed($client, sub { $out = shift }, { index => 0, quantity => 50 }, 100006);
+	check('menu: rank feed local windowing + full-catalog total (+1 entry)',
+		@{ $out->{items} || [] } == 3 && $out->{offset} == 0 && $out->{total} == 3
+		&& $out->{items}[0]{name} =~ /头陀渊讲故事/
+		&& ($out->{items}[2]{name} || '') eq 'PLUGIN_XIMALAYA_ALL_ALBUMS'
+		&& $out->{items}[2]{type} eq 'link');
+
+	# entry lives at position @$albums: window 1..1 shows only album 2
+	Plugins::Ximalaya::Categories::rankFeed($client, sub { $out = shift }, { index => 1, quantity => 1 }, 100006);
+	check('menu: entry position respected (window 1..1 -> album only, no entry)',
+		@{ $out->{items} || [] } == 1 && $out->{offset} == 1 && $out->{total} == 3
+		&& ($out->{items}[0]{name} || '') =~ /蛊真人/);
+
+	# window starting at the entry position renders just the entry
+	Plugins::Ximalaya::Categories::rankFeed($client, sub { $out = shift }, { index => 2, quantity => 50 }, 100006);
+	check('menu: window at entry position -> entry only, passthrough slug',
+		@{ $out->{items} || [] } == 1
+		&& ($out->{items}[0]{name} || '') eq 'PLUGIN_XIMALAYA_ALL_ALBUMS');
+
+	# allFeed: web full catalog via authoritative slug (zero guessed slugs)
+	my @all_args;
+	local *Plugins::Ximalaya::API::categoryAlbums = sub {
+		my ($class, $catId, $sortKey, $page, $perPage, $cb, $ecb) = @_;
+		@all_args = ($catId, $sortKey, $page, $perPage);
+		$cb->([
+			{ id => 1, title => 'A', announcer => 'x', cover => '//imagev2.xmcdn.com/a', paid => 0 },
+			{ id => 2, title => 'B', announcer => 'y', cover => '//imagev2.xmcdn.com/b', paid => 1 },
+		], 1620831);
+	};
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift }, { index => 50, quantity => 50 }, 'youshengshu');
+	check('menu: allFeed pages web catalog with exact total',
+		"@all_args" eq 'youshengshu hot 2 50'
+		&& $out->{offset} == 50 && $out->{total} == 1620831
+		&& @{ $out->{items} || [] } == 2
+		&& ($out->{items}[0]{name} || '') =~ /^A - x/);
+}
+
+# ------------------------------------- cooldown family split (must be LAST)
+{
+	my @calls;
+	local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, 'mobile';
+		$cb->([{ id => 8, title => 'm', paid => 0, cover => '' }], 60);
+	};
+	local *Plugins::Ximalaya::API::albumTracksShow = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, 'pc';
+		$cb->([], 0);
+	};
+	local *Plugins::Ximalaya::API::albumTracks = sub {
+		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+		push @calls, 'web';
+		$cb->([{ id => 7, title => 'w', paid => 0, cover => '' }], 50);
+	};
+	my ($out, $client) = ({}, bless({}, 'StubClient'));
+
+	# pc family cooling -> mobile PRIMARY still serves (independent family)
+	Plugins::Ximalaya::Plugin::note_risk_hit('tracks');
+	check('cooling: pc family (tracks) is cooling', Plugins::Ximalaya::Plugin::_cooling('tracks'));
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 12148879);
+	check('cooling: pc cooling does not touch mobile primary', "@calls" eq 'mobile' && @{ $out->{items} } == 1);
+
+	# mobile family ALSO cooling -> skips mobile AND cooling pc -> web serves
+	Plugins::Ximalaya::Plugin::note_risk_hit('tracks_mobile');
+	check('cooling: mobile family is cooling', Plugins::Ximalaya::Plugin::_cooling('tracks_mobile'));
+	@calls = ();
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 12148879);
+	check('cooling: mobile cooling + pc cooling -> web serves', "@calls" eq 'web' && @{ $out->{items} } == 1);
+
+	# web-only mode + its own family cooling -> cooldown hint, zero calls
+	$prefs->set('pc_channel', 0);
+	Plugins::Ximalaya::Plugin::note_risk_hit('tracks_web');
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 12148879);
+	check('cooling: pc off + tracks_web cooling -> cooldown hint', "@calls" eq 'web'
+		&& ($out->{items}[0]{name} || '') eq 'PLUGIN_XIMALAYA_COOLDOWN');
+	$prefs->set('pc_channel', 1);
+}
+
+print $fail ? "\nPC STUB TESTS FAILED\n" : "\nALL PC STUB TESTS PASSED ($n)\n";
+exit($fail ? 1 : 0);

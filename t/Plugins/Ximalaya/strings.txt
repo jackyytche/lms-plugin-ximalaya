@@ -1,0 +1,128 @@
+# String file for the Ximalaya plugin (EN + ZH_CN)
+PLUGIN_XIMALAYA
+	EN	Ximalaya
+	ZH_CN	喜马拉雅
+
+PLUGIN_XIMALAYA_DESC
+	EN	Ximalaya online audio (personal use, requires your own login cookie)
+	ZH_CN	喜马拉雅在线音频（个人自用，需在设置中填入自己的登录 Cookie）
+
+PLUGIN_XIMALAYA_SEARCH
+	EN	Search albums
+	ZH_CN	搜索专辑
+
+PLUGIN_XIMALAYA_MYALBUMS
+	EN	My albums
+	ZH_CN	我的专辑
+
+PLUGIN_XIMALAYA_NOALBUMS
+	EN	No albums yet - add album IDs in plugin settings
+	ZH_CN	还没有专辑 - 请在插件设置里添加专辑 ID
+
+PLUGIN_XIMALAYA_PASTE
+	EN	Paste album/track link or ID
+	ZH_CN	粘贴专辑/声音链接或 ID
+
+PLUGIN_XIMALAYA_BADINPUT
+	EN	Could not parse the input - expected an album/track link or numeric ID
+	ZH_CN	无法识别输入 - 请粘贴专辑/声音链接或纯数字 ID
+
+PLUGIN_XIMALAYA_ACCOUNT
+	EN	Account
+	ZH_CN	账号
+
+PLUGIN_XIMALAYA_NOLOGIN
+	EN	not configured (set cookie in plugin settings)
+	ZH_CN	未配置（请在插件设置里粘贴 Cookie）
+
+PLUGIN_XIMALAYA_ERR_LOGIN
+	EN	Login expired or missing - paste a fresh cookie in plugin settings (ret=1001)
+	ZH_CN	登录失效或未登录 - 请在插件设置里粘贴新 Cookie（ret=1001）
+
+PLUGIN_XIMALAYA_ERR_NOPERM
+	EN	No permission for this content - check your VIP/purchase status (ret=927/3005)
+	ZH_CN	无权访问该内容 - 请检查 VIP/购买状态（ret=927/3005）
+
+PLUGIN_XIMALAYA_ERR_RISK
+	EN	Rate limited by platform risk control - try again later
+	ZH_CN	被平台风控限流 - 请稍后再试
+
+PLUGIN_XIMALAYA_ERR_SIGN
+	EN	Could not obtain request signature (hdaa unreachable)
+	ZH_CN	无法获取请求签名（hdaa 不可达）
+
+PLUGIN_XIMALAYA_ERR_API
+	EN	API error
+	ZH_CN	接口错误
+
+PLUGIN_XIMALAYA_COOKIE
+	EN	Login cookie
+	ZH_CN	登录 Cookie
+
+PLUGIN_XIMALAYA_COOKIE_DESC
+	EN	Open ximalaya.com in your browser, log in, copy the whole Cookie request header (F12 - Network - any ximalaya.com request - Request Headers - Cookie) and paste it here. Treated as your own credential, never sent anywhere else.
+	ZH_CN	在浏览器登录 ximalaya.com 后，按 F12 - 网络 - 任一 ximalaya.com 请求 - 请求头 - Cookie，整段复制并粘贴到这里。仅作为你自己的登录凭证保存，不会发送给任何第三方。
+
+PLUGIN_XIMALAYA_QUALITY
+	EN	Preferred audio quality
+	ZH_CN	首选音质
+
+PLUGIN_XIMALAYA_QUALITY_DESC
+	EN	Falls back to lower quality if unavailable. "Lossless / highest" borrows the desktop client's quality ladder: paid/VIP tracks are requested at the client's ULTRA/LOSSLESS level (lossless requires entitlement and falls back to 128k automatically), free tracks play the original upload when available.
+	ZH_CN	不可用时自动降级。「无损/最高」借用桌面客户端的音质档位：付费/VIP 曲目按客户端极高/无损档请求（无损需相应权益，被拒时自动回落 128k），免费曲目在可用时播放原始上传音质。
+
+PLUGIN_XIMALAYA_ALBUMS
+	EN	My album IDs
+	ZH_CN	我的专辑 ID
+
+PLUGIN_XIMALAYA_ALBUMS_DESC
+	EN	One album ID per line, e.g. 83701277. Album page URL: www.ximalaya.com/album/83701277
+	ZH_CN	每行一个专辑 ID（例如 83701277）。专辑页地址：www.ximalaya.com/album/83701277
+
+PLUGIN_XIMALAYA_NEXT_PAGE
+	EN	Next page...
+	ZH_CN	下一页...
+
+PLUGIN_XIMALAYA_PREV_PAGE
+	EN	Previous page...
+	ZH_CN	上一页...
+
+PLUGIN_XIMALAYA_CATEGORY
+	EN	Discover (rankings)
+	ZH_CN	排行榜发现
+
+PLUGIN_XIMALAYA_CAT_TODO
+	EN	This section needs the PC backend channel - set "Backend channel: PC + web" in plugin settings
+	ZH_CN	此版块需要 PC 通道 - 请在插件设置里把「后端通道」设为 PC + web
+
+PLUGIN_XIMALAYA_COOLDOWN
+	EN	Risk-control cooldown active - please wait about a minute
+	ZH_CN	风控冷却中 - 请约 1 分钟后再试
+
+PLUGIN_XIMALAYA_PC
+	EN	Backend channel
+	ZH_CN	后端通道
+
+PLUGIN_XIMALAYA_PC_DESC
+	EN	PC + web uses the desktop-client protocol as a fallback for album lists and playback (independent risk control, free albums that fail on web). web only restores the pre-0.1.12 single-channel behaviour.
+	ZH_CN	PC + web 会以桌面客户端协议作为专辑列表与播放的兜底通道（独立风控域，可救 web 失败的免费专辑）。web only 则回到 0.1.12 之前的单通道行为。
+
+PLUGIN_XIMALAYA_MOBILE
+	EN	Mobile album list
+	ZH_CN	移动端曲目列表
+
+PLUGIN_XIMALAYA_MOBILE_DESC
+	EN	Auto uses the mobile-client album list for paid/VIP albums: exact track totals (correct page counts and page jumps) and per-track [VIP] marks in one request. Free albums are unaffected. Off falls back to the PC list with estimated totals.
+	ZH_CN	自动（推荐）：付费/VIP 专辑改用移动端列表接口，一次请求即可获得精确总集数（总页数正确、可直接跳页）和逐曲 [VIP] 标记；免费专辑不受影响。关闭则回落 PC 列表（总集数为估算值）。
+
+PLUGIN_XIMALAYA_TRACK_ALBUM
+	EN	Open containing album
+	ZH_CN	查看所属专辑
+
+PLUGIN_XIMALAYA_NOMORE
+	EN	No more tracks
+	ZH_CN	没有更多了
+
+PLUGIN_XIMALAYA_ALL_ALBUMS
+	EN	Browse ALL albums in this category...
+	ZH_CN	浏览该分类的全部专辑...

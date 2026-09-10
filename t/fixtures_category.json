@@ -1,0 +1,47 @@
+{
+	"searchlike": {
+		"ret": 200,
+		"data": {
+			"riskLevel": 0,
+			"total": 42,
+			"albumsResult": {
+				"docs": [
+					{ "albumId": "111", "title": "刑侦冤家", "cover": "http://x/1.jpg", "nickname": "播者A", "tracksCount": 93, "isPaid": 1 },
+					{ "albumId": "222", "title": "大案刑侦纪实", "cover": "", "nickname": "播者B", "tracksCount": 1083, "isPaid": 0 },
+					{ "albumId": "333", "title": "海龟侦探社", "cover": "", "nickname": "", "trackCount": 75, "isPaid": 0 }
+				]
+			}
+		}
+	},
+	"real2026": {
+		"ret": 200,
+		"msg": "success",
+		"data": {
+			"page": 1,
+			"pageConfig": {},
+			"pageSize": 30,
+			"total": 1620831,
+			"albums": [
+				{ "albumId": 81519744, "title": "蛊真人| 大爱仙尊|精品多播", "coverPath": "//imagev2.xmcdn.com/storages/fbf9/1.jpeg", "anchorName": "老宝玉_白玉京", "uid": 61885848, "isPaid": true, "isFinished": 2, "link": "/album/81519744", "playCount": 2022974122, "trackCount": 3434, "vipType": 2, "albumSubscript": 2 },
+				{ "albumId": 77980595, "title": "都市狂枭", "coverPath": "", "anchorName": "幻樱空", "isPaid": false, "isFinished": 1, "playCount": 699941002, "trackCount": 5922, "vipType": 0 }
+			]
+		}
+	},
+	"generic": {
+		"ret": 0,
+		"data": {
+			"docs": [
+				{ "id": "444", "albumTitle": "史上特大案纪实", "coverPath": "a/b.jpg", "announcer": "播者C", "tracksCount": 132, "isPaid": 0 },
+				{ "id": "555", "albumTitle": "某专辑", "isPaid": 1 }
+			]
+		}
+	},
+	"risk": {
+		"ret": 200,
+		"data": { "riskLevel": 1005, "albumsResult": { "docs": [] } }
+	},
+	"empty": {
+		"ret": 200,
+		"data": {}
+	}
+}

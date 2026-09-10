@@ -1,0 +1,42 @@
+{
+ "aes": [
+  {
+   "key": "000102030405060708090a0b0c0d0e0f",
+   "pt": "00112233445566778899aabbccddeeff",
+   "ct": "69c4e0d86a7b0430d8cdb78070b4c55a954f64f2e4e86e9eee82d20216684899"
+  },
+  {
+   "key": "3626114efac59d20d1d08e9265c991cd",
+   "pt": "0730a927ca72e591a26ac3c9ffe950436ab5fca7b2625a75d160b352b19f7642089de104dc",
+   "ct": "02f34007724845ede84f82ad1b3c14121fe979ab57aa592787b99e82eb8d1daf11a57a7341672cb56fef385a2e7210f9"
+  },
+  {
+   "key": "05125b07909ece1ffacf02b0abd3b522",
+   "pt": "294342e1c8baeb6ccfe63c4d5b1d1d8b233b63749769c447c4dcf2b7f21636a7347f5b4654db68828f2e",
+   "ct": "640698fc0d48ca44e677f3d0bd9cc2d146473c840cad370ff48d983c55052fcfd35c7a2b05aee13b1c9e4615b48c967c"
+  },
+  {
+   "key": "5072910a0eb67fb816526096d9c87d86",
+   "pt": "dc5a6cd343f52d3b08b9b268cb96fa862f721c450d7579a1e0faae3722ac4962110b560aece416f151b22608b1eb17",
+   "ct": "c278e5ce5e3f9952303f09072869ce432fe1fa94c4047a3ca4885a198e5286aa7711cf9a6221f0cb68963968a509eac9"
+  }
+ ],
+ "urls": [
+  {
+   "plain": "https://a.xmcdn.com/storages/1-audiofreehighqps/AA/BB/CC!~*'()dd.mp3",
+   "enc": "QPsXHIvlGDBHp59Z3NfFui8aUFMBl88aEusb82ktOpn_66012noOmyiqvlEXYTbEvn7t6gWbmOZ_FHm1GhnDdR18y1iwKbQT-Y-kOsmJVAOCd44E"
+  },
+  {
+   "plain": "https://audiopay.cos.tx.xmcdn.com/download/1.0.0/storages/xyz/中文Path.mp3?sign=x",
+   "enc": "zxPnhZbd7KZSXqQLpn2ueqElQoh6-PaP8fty-ldrEUx_SiB1KJtiuFII2bT_0MxhEvrhFfadguqaGSdhzOfi25Qf5XvOJSNXoJ0ZwrITxq8JAQXOje1hvtgxxzKTVvCTRVDx"
+  }
+ ],
+ "sign": {
+  "device_json_with_ts": "{\"GF9\":\"2.0.0\",\"HW5\":\"t6pfoml9679z52kqw93uqu75eflqdg1bykhl\",\"uS7\":\"\",\"KFp\":\"h5_goyxvzyohd\",\"ew1\":{\"Wg7\":\"Mozilla\",\"lV1\":\"Google Inc.\",\"Xt4\":\"Netscape\",\"yV2\":\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36\",\"KY1\":\"Win32\",\"Le3\":\"Tmxhcm9vei81LjAgKERybXdsZGggTUcgMTAuMDsgRHJtNjQ7IGM2NCkgWmtrb3ZEdnlQcmcvNTM3LjM2IChQU0dOTywgb3JwdiBUdnhwbCkgWHNpbG52LzEyNS4wLjAuMCBIenV6aXIvNTM3LjM2\",\"kH1\":900,\"ad5\":1440,\"Ua9\":24,\"TQ6\":900,\"kC7\":1440,\"me8\":24,\"eY9\":true,\"Kn2\":false,\"OM3\":true,\"sw8\":false,\"uW3\":-1,\"iO8\":\"https://www.ximalaya.com/\",\"By1\":\"www.ximalaya.com\",\"Gv4\":\"/\",\"ef2\":\"\",\"tZ2\":\"https:\",\"OG4\":true,\"kx1\":true,\"VD6\":true,\"Ov6\":false,\"lq3\":\"zh-CN\",\"ef5\":[\"zh-CN\"],\"OK3\":1,\"Fg5\":true,\"qS2\":[1440,900,1440,900],\"Fc5\":\"light\"},\"HK3\":{\"iI1\":{\"NF1\":-1,\"cA1\":-1,\"NK5\":-1,\"VP4\":\"-1.00\",\"RX5\":-1,\"VP6\":-1,\"tJ4\":-1},\"ti4\":{\"xm9\":true,\"is3\":1},\"AV9\":8,\"aK8\":\"Google Inc. (0x00001D17)\",\"df6\":\"ANGLE (0x00001D17, ZX C-960 (0x00003A04) Direct3D11 vs_5_0 ps_5_0, D3D11)\",\"WB9\":\"8ba05e37b4b3f57bddb4904eb8f40204\",\"pD7\":\"d41d8cd98f00b204e9800998ecf8427e\",\"da2\":\"124.04347527516074\",\"dt2\":16,\"Sy6\":-480,\"MS3\":\"Asia/Shanghai\",\"pi9\":false,\"Ao1\":[],\"BH5\":0,\"UG4\":[\"Arial\",\"Arial Black\",\"Arial Narrow\",\"Calibri\",\"Cambria\",\"Cambria Math\",\"Comic Sans MS\",\"Consolas\",\"Courier\",\"Courier New\",\"Georgia\",\"Helvetica\",\"Impact\",\"Lucida Console\",\"Lucida Sans Unicode\",\"Microsoft Sans Serif\",\"MS Gothic\",\"MS PGothic\",\"MS Sans Serif\",\"MS Serif\",\"Palatino Linotype\",\"Segoe Print\",\"Segoe Script\",\"Segoe UI\",\"Segoe UI Light\",\"Segoe UI Semibold\",\"Segoe UI Symbol\",\"Tahoma\",\"Times New Roman\",\"Trebuchet MS\",\"Verdana\",\"Wingdings\"]},\"fc9\":{\"cx4\":\"4g\",\"zY8\":-1,\"yj6\":1.5,\"dV4\":200,\"yX4\":false},\"adi\":\"070BF8:016D89:6BDE99:1600\",\"acd\":\"D2t6yNNzRqtSbN4GtZw4eGLn8tfc0Y1EYzqzMOCd9GiGMX17\",\"bdi\":null,\"bcd\":null,\"fd2\":{\"Pf5\":1783179255284,\"Ja5\":\"070BF8:016D89:6BDE99:1600\",\"xz7\":\"2ccd7426-e999-efba-78c5-bbea1fc69729\",\"av1\":\"D2t6yNNzRqtSbN4GtZw4eGLn8tfc0Y1EYzqzMOCd9GiGMX17\",\"cp9\":0},\"exts\":\"\",\"startime\":1783179258568,\"Zn6\":{\"oe2\":\"0\",\"EV9\":\"true\",\"xu2\":\"1441A790908125E9682A828824A003E99783D166409BBC4DD782F461C2955BA7\",\"CY8\":\"\",\"nE4\":928,\"Tw1\":[5799.099999904633,6727.399999856949],\"Sb1\":false},\"jm9\":2,\"dla\":\"\",\"swp\":\"\",\"ecm\":\"\",\"emm\":\"\",\"asu\":\"\",\"asu1\":0,\"GJ2\":\"31b33ada-785b-efc7-cbad-c985880ba125-fcs011\",\"slw\":\"\",\"bds\":\"\",\"MT7\":\"33-00000-0000-1111111-000000-0011-000000-0000-00000-0\",\"bnd\":\"-0\",\"kec\":\"000000\",\"BG5\":false,\"Fd8\":\"1\",\"iq7\":false,\"DP5\":\"1441A7909C087DBBE7CE59881B9DF8B9\",\"lL1\":\"63649ded5da25cce1ae7d5f2a950c18a\",\"uT8\":\"-1\",\"sV5\":2,\"Vo6\":\"\",\"infoF\":{\"lof\":false,\"baf\":false,\"auf\":false,\"iif\":false},\"Zf5\":1758000000000}",
+  "payload_sha256": "9d6dd8eb815cb9bcb8d8beea264e9936848771ffd04eea3208579afcf44325a2",
+  "compressed_sha256": "870bbd25727e2378610ab2a9e5adf9dd32040a8dc30eada7c6abe6d82c2b176b",
+  "aes_body_b64": "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",
+  "hdaa_response_b64": "Od1VDJqNk8EMcJuhEF4V4OPVmkvQcEr751JUJfmLA3lBZyGk0R90BUYgeXv3LTlK",
+  "expected_xm_sign": "1.2.3.4&&testsid123"
+ }
+}

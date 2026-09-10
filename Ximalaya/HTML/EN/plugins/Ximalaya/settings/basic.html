@@ -1,0 +1,34 @@
+[% PROCESS settings/header.html %]
+
+	[% WRAPPER setting title="PLUGIN_XIMALAYA_ACCOUNT" desc="PLUGIN_XIMALAYA_COOKIE_DESC" %]
+		<textarea name="pref_cookie" id="ximalaya_cookie" class="stdedit" rows="5" cols="80">[% prefs.pref_cookie | html %]</textarea>
+	[% END %]
+
+	[% WRAPPER setting title="PLUGIN_XIMALAYA_QUALITY" desc="PLUGIN_XIMALAYA_QUALITY_DESC" %]
+		<select name="pref_quality" id="ximalaya_quality" class="stdedit">
+			<option value="256"[% IF prefs.pref_quality == '256' %] selected[% END %]>Lossless / highest (experimental)</option>
+			<option value="128"[% IF prefs.pref_quality == '128' %] selected[% END %]>128 kbps</option>
+			<option value="64"[% IF prefs.pref_quality == '64' %] selected[% END %]>64 kbps</option>
+			<option value="32"[% IF prefs.pref_quality == '32' %] selected[% END %]>32 kbps</option>
+		</select>
+	[% END %]
+
+	[% WRAPPER setting title="PLUGIN_XIMALAYA_PC" desc="PLUGIN_XIMALAYA_PC_DESC" %]
+		<select name="pref_pc_channel" id="ximalaya_pc_channel" class="stdedit">
+			<option value="1"[% IF prefs.pref_pc_channel %] selected[% END %]>PC + web (recommended)</option>
+			<option value="0"[% IF !prefs.pref_pc_channel %] selected[% END %]>web only</option>
+		</select>
+	[% END %]
+
+	[% WRAPPER setting title="PLUGIN_XIMALAYA_MOBILE" desc="PLUGIN_XIMALAYA_MOBILE_DESC" %]
+		<select name="pref_mobile_channel" id="ximalaya_mobile_channel" class="stdedit">
+			<option value="1"[% IF prefs.pref_mobile_channel %] selected[% END %]>Auto (recommended - exact page counts)</option>
+			<option value="0"[% IF !prefs.pref_mobile_channel %] selected[% END %]>Off</option>
+		</select>
+	[% END %]
+
+	[% WRAPPER setting title="PLUGIN_XIMALAYA_ALBUMS" desc="PLUGIN_XIMALAYA_ALBUMS_DESC" %]
+		<textarea name="pref_albums" id="ximalaya_albums" class="stdedit" rows="5" cols="80">[% prefs.pref_albums | html %]</textarea>
+	[% END %]
+
+[% PROCESS settings/footer.html %]
