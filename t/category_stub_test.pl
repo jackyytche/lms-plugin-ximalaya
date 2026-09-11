@@ -51,7 +51,8 @@ check('searchlike: announcer mapping',              $albums->[1]{announcer} eq '
 ($albums, $total) = Plugins::Ximalaya::API->_parse_category_albums($fixtures->{generic});
 check('generic: parsed 2 albums',                   $albums && @$albums == 2);
 check('generic: total falls back to count (2)',     defined $total && $total == 2);
-check('generic: albumTitle/coverPath mapping',      $albums->[0]{title} eq '史上特大案纪实' && $albums->[0]{cover} eq 'a/b.jpg');
+# 0.1.24: bare coverPath is absolutized by the unified _norm_cover
+check('generic: albumTitle/coverPath mapping',      $albums->[0]{title} eq '史上特大案纪实' && $albums->[0]{cover} eq 'https://imagev2.xmcdn.com/a/b.jpg');
 check('generic: paid mapping',                      $albums->[1]{paid} == 1);
 
 # --- parse: real live shape captured 2026-09-10 (data.albums flat array,

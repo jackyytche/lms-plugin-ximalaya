@@ -84,6 +84,20 @@ my %PC_PLAY_FIELDS = (
 	playPath32      => 'MP3_32',
 );
 
+# 0.1.24: playPathDto carries a byte size per tier (fixture qualityFree:
+# originSize/hqSize/aacV164Size/mp364Size/aacV224Size/mp332Size; 0 = tier
+# absent). Mapped to the SAME tier keys as %PC_PLAY_FIELDS so _resolvePC can
+# publish the real bitrate (size*8/duration) exactly like the win chain does
+# with playUrlList fileSize.
+my %PC_SIZE_FIELDS = (
+	originSize  => 'ORIGIN',
+	hqSize      => 'MP3_128',
+	aacV164Size => 'M4A_64',
+	mp364Size   => 'MP3_64',
+	aacV224Size => 'M4A_24',
+	mp332Size   => 'MP3_32',
+);
+
 # Quality preference (pref 'quality') -> preferred pc tier order. Tier names
 # match the playPathDto mapping above (and the win playUrlList "type" field).
 # 0.1.18: new 256 tier ("lossless / highest", borrowed from the PC client's
@@ -145,6 +159,24 @@ sub _base_headers {
 	my $cookie = _cookie();
 	$h{'Cookie'} = $cookie if $cookie && !$h{'Cookie'};
 	return \%h;
+}
+
+# normalize cover references to absolute https URLs. Every shape occurs in
+# the wild: protocol-relative ("//imagev2.xmcdn.com/..."), bare storages
+# paths ("storages/..."), http:// and https:// URLs. 0.1.24: album/simple
+# hands out a protocol-relative cover (probe m0/diag_album_cover.py, real
+# reply for 83701277) and albumInfo passed it through raw - Daphile's cover
+# render crashed on it ("my albums" covers broken since the beginning; the
+# per-parser copies of this logic also disagreed, e.g. the track/quality
+# meta cover stayed a bare path so free-track now-playing artwork could
+# never load). All parsers funnel through this single helper now.
+sub _norm_cover {
+	my ($class, $c) = @_;
+	return '' unless defined $c && length $c;
+	$c =~ s{^//}{https://};
+	$c = 'https://imagev2.xmcdn.com/' . $c if $c !~ m{^https?://};
+	$c =~ s{^http://}{https://};
+	return $c;
 }
 
 # ------------------------------------------------------------------ pc helpers
@@ -272,11 +304,16 @@ sub albumInfo {
 				return;
 			}
 			my $info = eval { $data->{data}{albumPageMainInfo} } || {};
+			# 0.1.24: cover MUST be absolutized (protocol-relative in the real
+			# reply -> broke my-albums covers); anchorName is the real announcer
+			# field (probe 2026-09-11) - announcerName/nickname never matched.
+			$log->debug("Ximalaya: album/simple $albumId: " . ($info->{albumTitle} // '?')
+				. " cover=" . ($info->{cover} // 'none'));
 			$cb->({
 				id          => $albumId,
 				title       => $info->{albumTitle} // "Album $albumId",
-				cover       => $info->{cover}       // '',
-				announcer   => $info->{announcerName} // $info->{nickname} // '',
+				cover       => $class->_norm_cover($info->{cover}),
+				announcer   => $info->{anchorName} // $info->{announcerName} // $info->{nickname} // '',
 				tracksCount => $info->{tracksCount} // undef,
 				paid        => $info->{isPaid}      // 0,
 				finished    => $info->{isFinished}  // 0,
@@ -336,9 +373,7 @@ sub albumTracks {
 							id    => $t->{trackId},
 							title => $t->{title} // $t->{trackName} // "?",
 							paid  => $t->{isPaid} // 0,
-							cover => $t->{coverPath}
-								? 'https://imagev2.xmcdn.com/' . $t->{coverPath}
-								: ($t->{cover} // ''),
+							cover => $class->_norm_cover($t->{coverPath} || $t->{cover}),
 						}
 					} @$list ], $d->{trackTotalCount});
 				},
@@ -474,14 +509,11 @@ sub _parse_category_albums {
 	my @albums = map {
 		my $a = $_;
 		# cover: VERIFIED 2026-09-10 the live feed hands out protocol-
-		# relative paths ("//imagev2.xmcdn.com/..."); absolutize so every
-		# UI resolves them.
-		my $cover = $a->{cover} // $a->{coverPath} // '';
-		$cover =~ s{^//}{https://};
+		# relative paths; _norm_cover absolutizes every known shape
 		{
 			id          => $a->{albumId} // $a->{id},
 			title       => $a->{title} // $a->{albumTitle} // '?',
-			cover       => $cover,
+			cover       => $class->_norm_cover($a->{cover} // $a->{coverPath} // ''),
 			announcer   => $a->{anchorName} // $a->{nickname} // $a->{announcer} // '',
 			tracksCount => $a->{tracksCount} // $a->{trackCount} // undef,
 			paid        => $a->{isPaid} // 0,
@@ -572,15 +604,11 @@ sub _parse_show_tracks {
 
 	my @tracks = map {
 		my $t = $_;
-		my $cover = $t->{trackCoverPath} // '';
-		$cover =~ s{^//}{https://};
-		$cover = 'https://imagev2.xmcdn.com/' . $cover
-			if $cover && $cover !~ m{^https?://};
 		{
 			id    => $t->{trackId},
 			title => $t->{trackName} // "?",
 			paid  => $t->{isPaid} // 0,      # absent in real replies -> 0
-			cover => $cover,
+			cover => $class->_norm_cover($t->{trackCoverPath} // ''),
 		}
 	} @$list;
 
@@ -650,16 +678,22 @@ sub _parse_track_quality {
 		$urls{ $PC_PLAY_FIELDS{$field} } = $u;
 	}
 
+	# 0.1.24: per-tier byte sizes (+ result.duration) power the free-track
+	# bitrate display; zero/absent sizes are skipped (tier not really there)
+	my %sizes;
+	for my $field (keys %PC_SIZE_FIELDS) {
+		my $n = $dto->{$field};
+		$sizes{ $PC_SIZE_FIELDS{$field} } = $n if defined $n && $n =~ /^\d+$/ && $n > 0;
+	}
+
 	my $meta = {
 		title      => $result->{title} // undef,
 		albumId    => $result->{albumId} // undef,
 		albumTitle => $result->{albumTitle} // undef,
 		paid       => $result->{isPaid} // 0,
-		cover      => do {
-			my $c = $result->{coverPath} // '';
-			$c =~ s{^//}{https://};
-			$c;
-		},
+		duration   => $result->{duration} // undef,
+		sizes      => \%sizes,
+		cover      => $class->_norm_cover($result->{coverPath}),
 	};
 
 	# no playPathDto at all = unrecognized shape; an empty %urls with a
@@ -719,13 +753,11 @@ sub _parse_mobile_tracks {
 
 	my @out = map {
 		my $t = $_;
-		my $cover = $t->{coverSmall} // $t->{coverMiddle} // $t->{coverLarge} // '';
-		$cover =~ s{^http://}{https://};
 		{
 			id    => $t->{trackId},
 			title => $t->{title} // '?',
 			paid  => $t->{isPaid} // 0,
-			cover => $cover,
+			cover => $class->_norm_cover($t->{coverSmall} // $t->{coverMiddle} // $t->{coverLarge}),
 		}
 	} @$list;
 
@@ -887,14 +919,10 @@ sub _parse_rank_albums {
 		my @out = map {
 			my $a = $_;
 			$category_code ||= $a->{categoryCode} // '';
-			my $cover = $a->{cover} // $a->{coverPath} // '';
-			$cover =~ s{^//}{https://};
-			$cover = 'https://imagev2.xmcdn.com/' . $cover
-				if $cover && $cover !~ m{^https?://};
 			{
 				id          => $a->{id},
 				title       => $a->{albumTitle} // '?',
-				cover       => $cover,
+				cover       => $class->_norm_cover($a->{cover} // $a->{coverPath} // ''),
 				announcer   => $a->{anchorName} // '',
 				tracksCount => $a->{trackCount} // undef,
 				paid        => $a->{isPaid} // 0,
@@ -1117,6 +1145,15 @@ sub _resolvePC {
 				my ($url, $picked) = $class->_pick($urls, $PC_QUALITY_ORDER{$quality} || $PC_QUALITY_ORDER{64});
 				# set log.plugin.ximalaya=DEBUG to audit which tier got picked
 				$log->debug("Ximalaya: pc track $trackId quality=$quality picked=$picked");
+				# 0.1.24: real bitrate for the free-track display - playPathDto
+				# per-tier sizes + result.duration (same math as the win chain).
+				# The CDNs send no icy-br header, so without this Daphile shows
+				# no rate at all for the pc plaintext chain.
+				my $size     = ($meta->{sizes} || {})->{$picked};
+				my $duration = $meta->{duration};
+				my $bitrate  = ($size && $duration) ? int($size * 8 / $duration) : undef;
+				$log->debug("Ximalaya: pc track $trackId bitrate=", ($bitrate // 'unknown'),
+					" duration=", ($duration // 'unknown'));
 				$cb->({
 					trackId    => $trackId,
 					title      => $meta->{title} // "Track $trackId",
@@ -1124,6 +1161,8 @@ sub _resolvePC {
 					paid       => $meta->{paid} // 0,
 					quality    => $picked =~ /^MP3_/ ? 'mp3' : 'm4a',
 					cover      => $meta->{cover} || '',
+					($bitrate ? (bitrate => $bitrate) : ()),
+					($duration ? (duration => $duration) : ()),
 					url        => $url,
 				});
 				return;
@@ -1227,11 +1266,8 @@ sub _resolveWin {
 				quality    => $url =~ /\.mp3/ ? 'mp3' : 'm4a',
 				# 0.1.20: trackInfo carries coverLarge/Middle/Small (probe
 				# 2026-09-10) - needed for the now-playing artwork
-				cover      => do {
-					my $c = $info->{coverLarge} || $info->{coverMiddle} || $info->{coverSmall} || '';
-					$c =~ s{^http://}{https://};
-					$c;
-				},
+				cover      => $class->_norm_cover(
+					$info->{coverLarge} || $info->{coverMiddle} || $info->{coverSmall}),
 				($bitrate ? (bitrate => $bitrate)      : ()),
 				($duration ? (duration => $duration)   : ()),
 				url        => $url,
@@ -1310,11 +1346,8 @@ sub _resolveWeb {
 				authorized => $info->{isAuthorized} // 0,
 				paid       => $info->{isPaid} // 0,
 				quality    => $url =~ /\.mp3/ ? 'mp3' : 'm4a',
-				cover      => do {
-					my $c = $info->{coverLarge} || $info->{coverMiddle} || $info->{coverSmall} || '';
-					$c =~ s{^http://}{https://};
-					$c;
-				},
+				cover      => $class->_norm_cover(
+					$info->{coverLarge} || $info->{coverMiddle} || $info->{coverSmall}),
 				url        => $url,
 			});
 		},

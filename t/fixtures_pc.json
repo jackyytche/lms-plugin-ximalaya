@@ -275,5 +275,19 @@
   "rankElementEmpty": {
     "ret": 200,
     "data": { "rankingIds": [999], "rankList": [ { "count": 0, "ids": [], "albums": [] } ] }
+  },
+  "albumSimple": {
+    "ret": 200,
+    "data": {
+      "albumId": 83701277,
+      "albumPageMainInfo": {
+        "albumTitle": "开局和师姐双修，我黑化了",
+        "anchorName": "头陀渊讲故事",
+        "cover": "//imagev2.xmcdn.com/storages/16c3-audiofreehighqps/CE/88/GAqhVp8MSkJhAAM2DAPhxNQf.jpeg",
+        "isPaid": true,
+        "isFinished": 2,
+        "playCount": 383174871
+      }
+    }
   }
 }

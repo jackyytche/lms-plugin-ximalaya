@@ -142,10 +142,20 @@ close $fh;
 		exists $urls->{ORIGIN} && $urls->{ORIGIN} =~ /free_origin\.mp3$/);
 	check('quality: download paths still NOT mapped', $joined !~ /download/);
 	check('quality: meta title/paid/albumId',		$meta->{title} =~ /伊朗打航母/ && $meta->{paid} == 0 && $meta->{albumId} == 81078584);
+	# 0.1.24: per-tier sizes + duration power the free-track bitrate display
+	check('quality: per-tier sizes mapped (ORIGIN/M4A_64/M4A_24/MP3_64/MP3_32)',
+		$meta->{sizes}{ORIGIN} == 34273058 && $meta->{sizes}{M4A_64} == 8625530
+		&& $meta->{sizes}{M4A_24} == 3298176 && $meta->{sizes}{MP3_64} == 8523276
+		&& $meta->{sizes}{MP3_32} == 4261765);
+	check('quality: absent tier (hq empty string) has no size entry; duration present',
+		!exists $meta->{sizes}{MP3_128} && $meta->{duration} == 1065);
 
 	($urls, $meta, $err) = $api->_parse_track_quality($fx->{qualityPaid});
 	check('quality: paid reply parses OK with EMPTY url map (success, not error)',
 		defined $urls && !keys %$urls && !defined $err && $meta->{paid} == 1);
+	check('quality: paid reply sizes present without urls, duration absent',
+		$meta->{sizes}{MP3_128} == 1545465 && $meta->{sizes}{M4A_64} == 778633
+		&& !defined $meta->{duration});
 
 	my ($pf) = $api->_parse_track_quality($fx->{qualityFree});
 	my ($u128) = $api->_pick($pf, [qw(MP3_128 M4A_64 MP3_64 M4A_24 MP3_32)]);
@@ -154,6 +164,39 @@ close $fh;
 	my ($u32) = $api->_pick($pf, [qw(MP3_32 M4A_24)]);
 	check('pick: pref 32 -> MP3_32 first',
 		($u32 || '') eq 'http://aod.cos.tx.xmcdn.com/storages/3734-audiofreehighqps/29/E6/free_32.mp3');
+}
+
+# ------------------------------------------ album/simple cover (0.1.24)
+# probe m0/diag_album_cover.py (real reply 2026-09-11, album 83701277): cover
+# is PROTOCOL-RELATIVE ("//imagev2.xmcdn.com/..."), there is NO tracksCount
+# (0.1.15 lesson) and the announcer lives in anchorName. 0.1.23 and earlier
+# passed the raw cover through - my-albums covers broke in Daphile.
+{
+	check('cover: // relative -> https absolute',
+		$api->_norm_cover('//imagev2.xmcdn.com/a/b.jpeg') eq 'https://imagev2.xmcdn.com/a/b.jpeg');
+	check('cover: bare storages path -> imagev2 absolute',
+		$api->_norm_cover('storages/ab-cd/x.jpeg') eq 'https://imagev2.xmcdn.com/storages/ab-cd/x.jpeg');
+	check('cover: http upgraded, https untouched, empty/undef stay empty',
+		$api->_norm_cover('http://imagev2.xmcdn.com/a.jpg') eq 'https://imagev2.xmcdn.com/a.jpg'
+		&& $api->_norm_cover('https://imagev2.xmcdn.com/a.jpg') eq 'https://imagev2.xmcdn.com/a.jpg'
+		&& $api->_norm_cover('') eq '' && $api->_norm_cover(undef) eq '');
+
+	my ($info, $via);
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb, $cache) = @_;
+		$cb->($fx->{albumSimple});
+		return;
+	};
+	$api->albumInfo('83701277',
+		sub { $via = 'cb'; $info = shift; },
+		sub { $via = 'ecb' });
+	check('albumInfo: cb path, title/anchorName/paid mapped',
+		$via eq 'cb' && $info->{title} =~ /黑化/ && $info->{announcer} eq '头陀渊讲故事'
+		&& $info->{paid} == 1);
+	check('albumInfo: protocol-relative cover absolutized (my-albums crash fix)',
+		$info->{cover} eq 'https://imagev2.xmcdn.com/storages/16c3-audiofreehighqps/CE/88/GAqhVp8MSkJhAAM2DAPhxNQf.jpeg');
+	check('albumInfo: no tracksCount in real reply -> undef; isFinished truthy',
+		!defined $info->{tracksCount} && $info->{finished});
 }
 
 # ------------------------------------------------------------- show wiring
@@ -259,6 +302,8 @@ close $fh;
 		$via eq 'cb' && @hits == 1 && $hits[0] eq 'track/quality');
 	check('resolve: free track picks per pref 128 (HQ missing -> M4A_64), m4a',
 		$res && ($res->{url} || '') =~ /free_164\.m4a$/ && $res->{quality} eq 'm4a');
+	check('resolve: free track publishes bitrate/duration from aacV164Size (0.1.24)',
+		$res->{duration} == 1065 && $res->{bitrate} == int(8625530 * 8 / 1065));
 
 	# 2) paid track: quality returns no plaintext -> baseInfo WIN vector
 	%routes = (
@@ -332,6 +377,8 @@ close $fh;
 			sub { $via = 'ecb'; $res = shift; });
 		check('quality: pref 256 free track picks ORIGIN upload',
 			$via eq 'cb' && ($res->{url} || '') =~ /free_origin\.mp3$/);
+		check('resolve: ORIGIN bitrate from originSize/duration (0.1.24)',
+			$res->{duration} == 1065 && $res->{bitrate} == int(34273058 * 8 / 1065));
 		$prefs->set('quality', 128);
 	}
 
