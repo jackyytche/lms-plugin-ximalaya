@@ -291,6 +291,8 @@ close $fh;
 		$cb->('STUBSIGN');
 	};
 
+	$api->_clear_resolve_cache;    # 0.1.25: keep scenarios independent
+
 	# 1) free track: quality endpoint alone resolves it (no baseInfo call)
 	%routes = ('track/quality' => ['cb', $fx->{qualityFree}]);
 	@hits = ();
@@ -369,6 +371,7 @@ close $fh;
 	# ------------------------------------------------ 0.1.18 quality ladder
 	# 5) pref 256 free track: ORIGIN (full plaintext URL) is the top pick
 	{
+		$api->_clear_resolve_cache;    # same id as scenario 1 - drop its entry
 		$prefs->set('quality', 256);
 		%routes = ('track/quality' => ['cb', $fx->{qualityFree}]);
 		@hits = ();
@@ -426,6 +429,7 @@ close $fh;
 			if ($u =~ /trackQualityLevel=2/) { $cb->($lvl2_payload); return; }
 			die "unexpected URL in test: $u";
 		};
+		$api->_clear_resolve_cache;    # same id as scenario 2 - drop its entry
 		@hits = ();
 		$api->resolveTrack('759074956',
 			sub { $via = 'cb'; $res = shift; },
@@ -443,6 +447,7 @@ close $fh;
 			&& $urls_seen[1] =~ /trackQualityLevel=2/);
 		# level parameter is clamped/passed verbatim for plain 128 too
 		$prefs->set('quality', 128);
+		$api->_clear_resolve_cache;    # lvl2 url from the resolve above is cached
 		@urls_seen = ();
 		%routes = (
 			'track/quality' => ['cb', $fx->{qualityPaid}],
@@ -455,6 +460,76 @@ close $fh;
 			$via eq 'cb' && @urls_seen == 1 && $urls_seen[0] =~ /trackQualityLevel=2/);
 		$prefs->set('quality', 128);
 	}
+}
+
+# ------------------------------------------- 0.1.25 resolve cache + seek path
+# Root cause fixed here: a progress-bar seek rebuilds the song and re-runs
+# scanUrl; the ~1.5-3.5s async resolve gap made LMS drop the seekdata and
+# restart from 0. A fresh cache entry lets scanUrl answer in-place.
+{
+	package TSongFake;
+	sub new {
+		my ($class, %a) = @_;
+		return bless { currentTrack => 'THETRACK', streamUrl => undef, %a }, $class;
+	}
+	sub currentTrack { $_[0]->{currentTrack} }
+	sub streamUrl    { my $s = shift; $s->{streamUrl} = $_[0] if @_; $s->{streamUrl} }
+}
+
+{
+	my ($url, $headers);
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb) = @_;
+		($url, $headers) = ($u, $h);
+		$cb->($fx->{qualityFree});
+		return;
+	};
+
+	$api->_clear_resolve_cache;   # outer lexical: string package name, file scope
+
+	# priming: the first resolve goes through the stubbed fetcher and stores
+	local *Plugins::Ximalaya::Sign::gen = sub { my ($class, $cb) = @_; $cb->('STUBSIGN') };
+	my $r1;
+	$api->resolveTrack('1012852891', sub { $r1 = shift }, sub { });
+	check('cache: priming resolve stored (1 fetch, url in hand)',
+		defined $r1 && ($r1->{url} || '') =~ /free_164\.m4a$/ && defined $api->peek_resolve('1012852891'));
+
+	# sync re-serve: zero requests, same resolve content
+	my (@hits2, $r2, $sync);
+	local *Plugins::Ximalaya::API::_json_get = sub {
+		my ($class, $u, $h, $cb, $ecb) = @_;
+		push @hits2, $u;
+		$cb->($fx->{qualityFree});
+		return;
+	};
+	$api->resolveTrack('1012852891', sub { $sync = 1; $r2 = shift }, sub { });
+	check('cache: second resolve is synchronous with ZERO requests',
+		$sync && @hits2 == 0 && $r2->{url} eq $r1->{url});
+
+	# scanUrl seek fast-path: with a primed cache the handler answers IN-PLACE
+	# (cb before scanUrl returns - no SUPER::scanUrl scanner hop) and swaps
+	# the stream URL. In-place cb is what keeps LMS's seekdata alive.
+	my $song  = TSongFake->new;
+	my ($cb_track, $inplace);
+	Plugins::Ximalaya::ProtocolHandler->scanUrl('xmly://track/1012852891', {
+		song => $song,
+		cb   => sub { $inplace = 1; $cb_track = shift },
+	});
+	check('seek: scanUrl answered synchronously (no async scanner hop)',
+		$inplace && @hits2 == 0);
+	check('seek: scanUrl handed back the song\'s current track object',
+		defined $cb_track && $cb_track eq 'THETRACK');
+	check('seek: scanUrl swapped streamUrl to the cached CDN url',
+		($song->streamUrl || '') eq $r1->{url});
+	my ($meta_call) = grep { $_->[0] eq 'xmly://track/1012852891' } @{ Slim::Music::Info->remote_meta };
+	check('seek: fast-path republished remote metadata (secs/bitrate/ct)',
+		$meta_call && $meta_call->[1]{ct} eq 'audio/mp4'
+		&& $meta_call->[1]{secs} == 1065
+		&& $meta_call->[1]{bitrate} == int(8625530 * 8 / 1065 / 1000));
+
+	# cleanup so later blocks start clean
+	$api->_clear_resolve_cache;
+	check('cache: clear wipes the entry', !defined $api->peek_resolve('1012852891'));
 }
 
 # ------------------------------------------------- Plugin albumHandler chain

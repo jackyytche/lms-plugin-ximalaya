@@ -1104,6 +1104,50 @@ sub trackMeta {
 	return;
 }
 
+# ---------------------------------------------- resolve cache (seek fast-path)
+# 0.1.25: short-lived in-memory resolve cache (server RAM only, never
+# persisted). WHY: a progress-bar seek makes LMS rebuild the song and re-run
+# scanUrl. Our resolve is async (~1.5-3.5s: track/quality + hdaa + baseInfo,
+# then Scanner::Remote probes the CDN URL) and that gap made the controller
+# treat the player as stopped and restart the track WITHOUT seekdata - every
+# seek restarted from 0. Diag 2026-09-11: the SAME remote CDN URL seeks fine
+# (m0/diag_cdn_range.py: Accept-Ranges + HTTP 206) and a raw-URL A/B on the
+# device confirmed the player/LMS chain is seek-capable - only the async
+# handler hop broke it. With a fresh cache entry ProtocolHandler.scanUrl
+# answers synchronously and the re-open carries its Range like any plain
+# remote URL. Side effect: repeats/seeks within 10min cost ZERO API calls.
+my %RESOLVE_CACHE;    # trackId => { expires => epoch, info => {resolve hash} }
+
+sub peek_resolve {
+	my ($class, $trackId) = @_;
+
+	my $c = $RESOLVE_CACHE{$trackId} or return undef;
+	if ($c->{expires} < Time::HiRes::time()) {
+		delete $RESOLVE_CACHE{$trackId};
+		return undef;
+	}
+	return $c->{info};
+}
+
+sub _store_resolve {
+	my ($class, $trackId, $info) = @_;
+
+	# tiny cap (one album of distinct tracks is far beyond normal use)
+	%RESOLVE_CACHE = () if keys %RESOLVE_CACHE > 100;
+	$RESOLVE_CACHE{$trackId} = {
+		expires => Time::HiRes::time() + 600,
+		info    => $info,
+	};
+
+	return;
+}
+
+# test hook: wipe the cache between stub scenarios
+sub _clear_resolve_cache {
+	%RESOLVE_CACHE = ();
+	return;
+}
+
 # $class->resolveTrack($trackId, $cb, $ecb)
 #   cb->( { trackId, title, authorized, paid, url, quality } )
 #   ecb->( $errcode )   1001=login 927/3005=noperm risk=soft-risk 407=sign ...
@@ -1117,17 +1161,31 @@ sub trackMeta {
 sub resolveTrack {
 	my ($class, $trackId, $cb, $ecb) = @_;
 
+	# 0.1.25 seek fast-path: serve a fresh resolve synchronously
+	if (my $cached = $class->peek_resolve($trackId)) {
+		main::INFOLOG && $log->info("Ximalaya: track $trackId resolve cache hit (sync seek path)");
+		$cb->($cached);
+		return;
+	}
+
+	# store every successful resolve, then hand it on (0.1.25)
+	my $store = sub {
+		my ($info) = @_;
+		$class->_store_resolve($trackId, $info) if $info && $info->{url};
+		$cb->($info);
+	};
+
 	if ($class->pc_enabled) {
-		$class->_resolvePC($trackId, $cb,
+		$class->_resolvePC($trackId, $store,
 			sub {
 				my ($code) = @_;
 				$log->warn("Ximalaya: pc resolve failed for $trackId ($code) - web fallback");
-				$class->_resolveWeb($trackId, $cb, $ecb);
+				$class->_resolveWeb($trackId, $store, $ecb);
 			});
 		return;
 	}
 
-	$class->_resolveWeb($trackId, $cb, $ecb);
+	$class->_resolveWeb($trackId, $store, $ecb);
 
 	return;
 }

@@ -36,6 +36,22 @@ sub scanUrl {
 		return;
 	}
 
+	# 0.1.25 seek fast-path: answer SYNCHRONOUSLY when a fresh resolve is in
+	# the cache. A seek makes LMS rebuild the song and re-run scanUrl; with
+	# the async resolve (~1.5-3.5s gap) the controller treated the player as
+	# stopped and rebuilt the song WITHOUT seekdata - the track restarted
+	# from 0 and every progress-bar drag was broken. Device A/B 2026-09-11:
+	# the same CDN URL seeks fine when played raw, so a zero-gap sync re-open
+	# (seekdata kept, Range honored) restores seek exactly like a plain
+	# remote URL. The cb runs in-place - safe here, Song's cb only advances
+	# the open flow.
+	if (my $info = Plugins::Ximalaya::API->peek_resolve($trackId)) {
+		main::INFOLOG && $log->info("Ximalaya: track $trackId sync re-open from resolve cache (seek path)");
+		$class->_apply_resolve($song, $url, $info);
+		$cb->($song->currentTrack);
+		return;
+	}
+
 	main::INFOLOG && $log->info("Ximalaya: resolving track $trackId");
 
 	Plugins::Ximalaya::API->resolveTrack(
@@ -51,32 +67,9 @@ sub scanUrl {
 
 			main::INFOLOG && $log->info("Ximalaya: track $trackId => $info->{quality} stream");
 
-			# 0.1.20: feed the now-playing display. Radio streams show
-			# bitrate because their servers send icy-br headers; Ximalaya
-			# CDNs send none. setRemoteMetadata is LMS's official hook:
-			# publishes title/duration/bitrate onto the track (bitrate in
-			# kbps - the CBR table spans 32..320) and puts the cover into
-			# the remote_image cache (30d) so every UI resolves artwork.
-			# Supersedes 0.1.19's separate setBitrate/setDuration calls.
-			if ($info->{cover} || $info->{bitrate} || $info->{duration}) {
-				Slim::Music::Info::setRemoteMetadata($url, {
-					title   => $info->{title},
-					secs    => $info->{duration},
-					bitrate => $info->{bitrate} ? int($info->{bitrate} / 1000) : undef,
-					cover   => $info->{cover},
-					ct      => $info->{quality} eq 'mp3' ? 'audio/mpeg' : 'audio/mp4',
-				});
-			}
-
-			# 0.1.20/0.1.21: cache the resolve result for getMetadataFor -
-			# that hook fully replaces the base class remoteMeta, and Daphile
-			# renders the codec string from remoteMeta.type (NOT the bitrate
-			# field), so the only way to get a rate on screen is to embed it
-			# in the type text ("AAC 96kbps CBR").
-			$class->cache_metadata($url, $info);
-
-			# the resolved url is what actually gets streamed
-			$song->streamUrl($info->{url});
+			# 0.1.25: metadata publication + stream URL swap moved into
+			# _apply_resolve (shared verbatim with the sync seek path).
+			$class->_apply_resolve($song, $url, $info);
 
 			$args->{cb} = sub {
 				my ($track) = @_;
@@ -168,6 +161,42 @@ sub getNextTrack {
 }
 
 sub shouldCacheImage { 1 }
+
+# shared post-resolve publication (0.1.25, split out of the async callback
+# so the sync seek fast-path can reuse it verbatim): remote metadata for the
+# now-playing pipeline + the stream URL swap.
+sub _apply_resolve {
+	my ($class, $song, $url, $info) = @_;
+
+	# 0.1.20: feed the now-playing display. Radio streams show
+	# bitrate because their servers send icy-br headers; Ximalaya
+	# CDNs send none. setRemoteMetadata is LMS's official hook:
+	# publishes title/duration/bitrate onto the track (bitrate in
+	# kbps - the CBR table spans 32..320) and puts the cover into
+	# the remote_image cache (30d) so every UI resolves artwork.
+	# Supersedes 0.1.19's separate setBitrate/setDuration calls.
+	if ($info->{cover} || $info->{bitrate} || $info->{duration}) {
+		Slim::Music::Info::setRemoteMetadata($url, {
+			title   => $info->{title},
+			secs    => $info->{duration},
+			bitrate => $info->{bitrate} ? int($info->{bitrate} / 1000) : undef,
+			cover   => $info->{cover},
+			ct      => $info->{quality} eq 'mp3' ? 'audio/mpeg' : 'audio/mp4',
+		});
+	}
+
+	# 0.1.20/0.1.21: cache the resolve result for getMetadataFor -
+	# that hook fully replaces the base class remoteMeta, and Daphile
+	# renders the codec string from remoteMeta.type (NOT the bitrate
+	# field), so the only way to get a rate on screen is to embed it
+	# in the type text ("AAC 96kbps CBR").
+	$class->cache_metadata($url, $info);
+
+	# the resolved url is what actually gets streamed
+	$song->streamUrl($info->{url});
+
+	return;
+}
 
 1;
 
