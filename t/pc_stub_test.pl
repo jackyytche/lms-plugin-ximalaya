@@ -652,6 +652,8 @@ close $fh;
 
 	# ------------------------------------------------ ProtocolHandler metadata
 	{
+		check('handler: canTranscodeSeek declared (seek=2 -> $START$ passed to decoder)',
+			Plugins::Ximalaya::ProtocolHandler->canTranscodeSeek() ? 1 : 0);
 		Plugins::Ximalaya::ProtocolHandler->cache_metadata('xmly://track/759074956', {
 			title => 't', cover => 'https://imagev2.xmcdn.com/storages/x/cover.jpg',
 			duration => 624, bitrate => 96845, quality => 'm4a',
