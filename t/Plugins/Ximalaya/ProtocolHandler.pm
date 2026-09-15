@@ -23,6 +23,21 @@ my $log = logger('plugin.ximalaya');
 
 Slim::Player::ProtocolHandlers->registerHandler('xmly', __PACKAGE__);
 
+# 0.1.26: declare TRANSCODER-LEVEL seek support. Song::canDoSeek (Song.pm
+# L843) returns canSeek=2 only when the protocol handler answers
+# canTranscodeSeek. canSeek=2 makes Song::open (L402/L432) run the reopen
+# with wantOptions('T') and set $transcoder->{'start'} = timeOffset, so
+# tokenizeConvertCommand2 fills the $START$ placeholder of the transcode
+# command. This matters on Daphile: the player chain is the daphile
+# "Decode" program (mp4-wav-daphile-*, streamMode=R) whose command template
+# is "-f wav $START$ $END$ $RESAMPLE$ $PATH$" - the decoder fetches the
+# remote URL itself, so WITHOUT $START$ every seek reopened the stream at
+# byte 0 (progress bar kept the old position, audio restarted). Device log
+# 13:54:54 proved the chain: seek=true time=20.64 canSeek=1 -> tokenized
+# command with EMPTY start. With canSeek=2 the decoder receives the start
+# offset and honors it.
+sub canTranscodeSeek { 1 }
+
 sub scanUrl {
 	my ($class, $url, $args) = @_;
 
