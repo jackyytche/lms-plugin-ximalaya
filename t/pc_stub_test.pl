@@ -873,33 +873,37 @@ close $fh;
 	}
 }
 
-# ------------------------------------------- my albums / favourites 0.1.28
+# ------------------------------------------- my albums / favourites 0.1.28+
 {
 	require Slim::Utils::Favorites;
 
 	# albumItem exposes the native favourites metadata (web UI renders the
-	# star action from these - Slim::Web::XMLBrowser L1036-1040)
+	# star action from these - Slim::Web::XMLBrowser L1036-1040); 0.1.29: the
+	# favourites URL is the absolute HTTP album feed (browsable), no longer a
+	# dead xmly://album/<id> bookmark
 	{
 		my $it = Plugins::Ximalaya::Plugin::albumItem({
 			id => 82080513, title => '郭德纲相声精选', announcer => '德云社',
 			cover => 'https://x/y.jpg', paid => 0,
 		});
-		check('fav: albumItem exposes xmly://album favourites url + title + type',
-			$it->{favorites_url} eq 'xmly://album/82080513'
+		check('fav: albumItem exposes absolute album-feed favourites url + title + type',
+			$it->{favorites_url} eq 'http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=82080513'
 			&& $it->{favorites_title} =~ /郭德纲相声精选/
 			&& $it->{favorites_type} eq 'link');
 		my $fb = Plugins::Ximalaya::Plugin::_albumFallbackItem(12345);
 		check('fav: fallback item is favourites-capable too',
-			$fb->{favorites_url} eq 'xmly://album/12345');
+			$fb->{favorites_url} eq 'http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=12345');
 	}
 
-	# myAlbums merge: pref ids + LMS favourites, dedup, pref order first
+	# myAlbums merge: pref ids + LMS favourites (both URL shapes), dedup,
+	# pref order first
 	{
 		my $saved = $prefs->get('albums');
 		$prefs->set('albums', "111\n222");
 
 		Slim::Utils::Favorites::set_store_rows(
-			['xmly://album/333', 'Fav Album 333'],
+			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=333', 'Fav Album 333'],
+			['xmly://album/444', 'legacy bookmark 444'],
 			['xmly://album/111', 'dup of pref 111'],
 			['xmly://track/999', 'not an album - ignored'],
 		);
@@ -910,9 +914,10 @@ close $fh;
 		my ($out, $client) = ({}, bless({}, 'StubClient'));
 		Plugins::Ximalaya::Plugin::myAlbumsHandler($client, sub { $out = shift });
 		my $names = join('|', map { $_->{name} || '?' } @{ $out->{items} || [] });
-		check('fav: myAlbums merges pref ids + favourites (dedup, pref first)',
-			@{ $out->{items} || [] } == 3
-			&& $names =~ /Album 111/ && $names =~ /Album 222/ && $names =~ /Album 333/);
+		check('fav: myAlbums merges pref + feed-url + legacy favourites (dedup, pref first)',
+			@{ $out->{items} || [] } == 4
+			&& $names =~ /Album 111/ && $names =~ /Album 222/
+			&& $names =~ /Album 333/ && $names =~ /Album 444/);
 
 		$prefs->set('albums', '');
 		Slim::Utils::Favorites::set_store_rows();
@@ -922,6 +927,58 @@ close $fh;
 
 		$prefs->set('albums', $saved);
 		Slim::Utils::Favorites::set_store_rows();
+	}
+}
+
+# ---------------------------------------------- album feed (starred) 0.1.29
+{
+	# stub response object capturing content_type
+	my $resp = bless {}, 'XimaStubResponse';
+	local *XimaStubResponse::content_type = sub {
+		my ($self, $ct) = @_;
+		$self->{ct} = $ct;
+		return;
+	};
+
+	# no album param -> bare OPML skeleton, xml content type
+	{
+		my ($body, $got) = (undef, undef);
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, {},
+			sub { (undef, undef, my $b) = @_; $body = $$b; $got = 1; },
+			undef, $resp);
+		check('feed: missing album -> empty OPML + text/xml + callback form',
+			$got && $resp->{ct} eq 'text/xml; charset=utf-8'
+			&& $body =~ /^\Q<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\E/
+			&& $body =~ /<opml version="1\.0">/ && $body !~ /<outline/);
+	}
+
+	# album with tracks: audio rows + XML escaping + self-referencing next
+	# page link (mock: 1 track now, server total 2 -> one more page)
+	{
+		$prefs->set('mobile_channel', 1);   # albumHandler routes mobile-first
+		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+			$cb->([ { id => 759074956, title => 'T&T <feat>', paid => 1, cover => '' } ], 2);
+		};
+		my $body;
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '30816438', page => 1 },
+			sub { (undef, undef, my $b) = @_; $body = $$b; },
+			undef, $resp);
+		check('feed: audio row with escaped title + xmly play url',
+			$body =~ m{\Q<outline text="[VIP] 1. T&amp;T &lt;feat&gt;" URL="xmly://759074956" type="audio"/>\E});
+		check('feed: next-page link back at the route with escaped &page',
+			$body =~ m{\QURL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=30816438&amp;page=2" type="link"\E});
+
+		# last page (have == total) -> no next-page link
+		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+			$cb->([ { id => 759074957, title => 'last', paid => 0, cover => '' } ], 2);
+		};
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '30816438', page => 2 },
+			sub { (undef, undef, my $b) = @_; $body = $$b; },
+			undef, $resp);
+		check('feed: last page has no next-page link',
+			$body =~ /xmly:\/\/759074957/ && $body !~ /&amp;page=3/);
 	}
 }
 

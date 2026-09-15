@@ -82,6 +82,16 @@ sub initPlugin {
 		Plugins::Ximalaya::Settings->new();
 	}
 
+	# 0.1.29: HTTP feed route for starred albums. Favourites entries point at
+	# this URL (see albumItem) so clicking one in Favourites browses the
+	# album's track list like any other menu instead of failing with
+	# "can not request non-http url".
+	require Slim::Web::Pages;
+	Slim::Web::Pages->addPageFunction(
+		qr{^plugins/Ximalaya/albumfeed\.html$},
+		\&albumFeedHandler,
+	);
+
 	$class->SUPER::initPlugin(
 		feed => \&handleFeed,
 		tag  => 'ximalaya',
@@ -185,26 +195,39 @@ sub searchHandler {
 
 # -------------------------------------------------------------- album tracks
 
+# 0.1.29: absolute feed URL for a starred album. Favourites store the URL
+# string as-is and LMS later fetches it SERVER-SIDE, so it must be absolute
+# (serverURL is client-less). Browsing it renders the OPML produced by
+# albumFeedHandler below.
+sub _albumFeedUrl {
+	my ($albumId) = @_;
+	my $base = eval { require Slim::Utils::Network; Slim::Utils::Network::serverURL() };
+	$base = 'http://127.0.0.1:9000' unless $base;    # never expected; keep the entry non-fatal
+	$base =~ s{/+$}{};
+	return $base . '/plugins/Ximalaya/albumfeed.html?album=' . $albumId;
+}
+
 sub albumItem {
 	my ($album) = @_;
 	my $name = $album->{title} // "Album $album->{id}";
 	$name .= " - $album->{announcer}" if $album->{announcer};
 	$name .= ' [VIP]' if $album->{paid};
 
-	# 0.1.28: native favourite support. The web UI (Slim::Web::XMLBrowser)
+	# 0.1.28/0.1.29: native favourite support. The web UI (Slim::Web::XMLBrowser)
 	# renders an add/remove favourites action for any item carrying a
 	# favorites_url and flags it as already-starred (favorites=2) via
-	# Favorites->hasUrl. Starred entries land in LMS Favourites as
-	# xmly://album/<id> links; myAlbumsHandler merges them back into the
-	# my-albums list. One place here covers EVERY album entry point
-	# (search, ranks, catalog browse, my albums itself).
+	# Favorites->hasUrl. Starred entries land in LMS Favourites as HTTP feed
+	# URLs (albumfeed.html?album=N); clicking one browses the track list
+	# (0.1.29; the earlier xmly://album/<id> shape was a dead bookmark).
+	# One place here covers EVERY album entry point (search, ranks, catalog
+	# browse, my albums itself).
 	return {
 		name        => $name,
 		image       => $album->{cover},
 		type        => 'link',
 		url         => \&albumHandler,
 		passthrough => [ $album->{id} ],
-		favorites_url   => "xmly://album/$album->{id}",
+		favorites_url   => _albumFeedUrl($album->{id}),
 		favorites_title => $name,
 		favorites_type  => 'link',
 	};
@@ -217,7 +240,7 @@ sub _albumFallbackItem {
 		type        => 'link',
 		url         => \&albumHandler,
 		passthrough => [ $id ],
-		favorites_url   => "xmly://album/$id",
+		favorites_url   => _albumFeedUrl($id),
 		favorites_title => "Album $id",
 		favorites_type  => 'link',
 	};
@@ -386,6 +409,93 @@ sub trackItem {
 	};
 }
 
+# --------------------------------------------------- starred-album HTTP feed
+
+sub _xml_escape {
+	my ($s) = @_;
+	return '' unless defined $s;
+	$s =~ s/&/&amp;/g;
+	$s =~ s/</&lt;/g;
+	$s =~ s/>/&gt;/g;
+	$s =~ s/"/&quot;/g;
+	return $s;
+}
+
+# 0.1.29: the web page behind a starred album's Favourites entry. LMS
+# fetches it server-side as a remote OPML feed when the user clicks the
+# favourite (Slim::Formats::XML), so we serve classic outline attributes
+# (text/URL/type). Track rows are type=audio with xmly:// play URLs (the
+# protocol handler is registered, playback verified), the next-page row is
+# type=link pointing back at this route. Reuses albumHandler's
+# mobile -> pc -> web routing + windowing untouched.
+sub albumFeedHandler {
+	my ($client, $params, $callback, $httpClient, $response) = @_;
+
+	my $albumId = ($params->{album} || '') =~ /^(\d+)$/ ? $1 : '';
+	my $page    = (($params->{page} || 1) =~ /^(\d+)$/ ? $1 : 1) || 1;
+	$page = 1 if $page < 1;
+
+	my $finish = sub {
+		my ($items) = @_;
+
+		my @rows;
+		for my $it (@$items) {
+			my $name = _xml_escape($it->{name} || '');
+			next unless $name ne '';
+			my $type = $it->{type} || '';
+			if ($type eq 'audio' && $it->{play}) {
+				push @rows, '<outline text="' . $name . '" URL="'
+					. _xml_escape($it->{play}) . '" type="audio"/>';
+			}
+			elsif (($type eq 'link' || $type eq 'audio') && $it->{url}) {
+				push @rows, '<outline text="' . $name . '" URL="'
+					. _xml_escape($it->{url}) . '" type="link"/>';
+			}
+			else {
+				# error/status rows degrade to plain text entries
+				push @rows, '<outline text="' . $name . '" type="text"/>';
+			}
+		}
+
+		my $body = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' . "\n"
+			. '<opml version="1.0"><head><title>Ximalaya album ' . _xml_escape($albumId)
+			. '</title></head><body>' . "\n"
+			. join("\n", @rows) . "\n</body></opml>";
+
+		$response->content_type('text/xml; charset=utf-8');
+		$callback->($client, $params, \$body, $httpClient, $response);
+		return;
+	};
+
+	unless ($albumId) {
+		$finish->([]);
+		return;
+	}
+
+	Plugins::Ximalaya::Plugin::albumHandler($client,
+		sub {
+			my ($feed) = @_;
+			my $items = $feed->{items} || [];
+
+			# next page: only when the windowing reports more to come
+			my $total = $feed->{total};
+			my $have  = ($feed->{offset} || 0) + scalar @$items;
+			if (defined $total && $have < $total && scalar @$items) {
+				push @$items, {
+					name => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
+					type => 'link',
+					url  => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
+				};
+			}
+			$finish->($items);
+		},
+		{ quantity => 50, index => ($page - 1) * 50 },
+		$albumId,
+	);
+
+	return;
+}
+
 # --------------------------------------------------------------- my albums
 
 sub myAlbumsHandler {
@@ -408,7 +518,10 @@ sub myAlbumsHandler {
 	if ($favs) {
 		my $items = eval { $favs->all } || [];
 		for my $fi (@$items) {
-			next unless (($fi->{url} || '') =~ m{^xmly://album/(\d+)});
+			my $u = $fi->{url} || '';
+			# 0.1.29 URL shape (albumfeed.html?album=N) + 0.1.28 legacy
+			# (xmly://album/N) - both merge into my albums
+			next unless ($u =~ m{^xmly://album/(\d+)} || $u =~ m{albumfeed\.html\?album=(\d+)});
 			push @ids, $1 unless $seen{$1}++;
 		}
 	}
