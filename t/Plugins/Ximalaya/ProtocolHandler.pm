@@ -139,7 +139,11 @@ sub cache_metadata {
 	my $kbps   = $info->{bitrate} ? int($info->{bitrate} / 1000) : 0;
 	# same CBR membership table as Slim::Music::Info (32..320)
 	my $suffix = ($kbps >= 32 && $kbps <= 320 && $kbps % 8 == 0) ? ' CBR' : '';
-	my $codec  = ($info->{quality} || '') eq 'mp3' ? 'MP3' : 'AAC';
+	# 0.1.30: quality now carries the real codec hint (API _suffix_quality) -
+	# the ORIGIN tier streams .flac uploads at 1000+ kbps that were shown
+	# as AAC before.
+	my $q      = $info->{quality} || '';
+	my $codec  = $q eq 'mp3' ? 'MP3' : $q eq 'flac' ? 'FLAC' : 'AAC';
 
 	$METADATA{$url} = {
 		title    => $info->{title},
@@ -196,7 +200,8 @@ sub _apply_resolve {
 			secs    => $info->{duration},
 			bitrate => $info->{bitrate} ? int($info->{bitrate} / 1000) : undef,
 			cover   => $info->{cover},
-			ct      => $info->{quality} eq 'mp3' ? 'audio/mpeg' : 'audio/mp4',
+			ct      => ($info->{quality} || '') eq 'mp3' ? 'audio/mpeg'
+				 : ($info->{quality} || '') eq 'flac' ? 'audio/flac' : 'audio/mp4',
 		});
 	}
 

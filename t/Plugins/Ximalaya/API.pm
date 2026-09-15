@@ -780,6 +780,20 @@ sub _parse_mobile_tracks {
 	return (\@out, $total, undef);
 }
 
+# 0.1.30: codec hint from the actual stream-path suffix. The tier labels
+# lie for the ORIGIN tier - it streams the ORIGINAL upload (0.1.18), and a
+# .flac upload plays at 1000+ kbps but was labelled 'm4a' -> the UI showed
+# AAC for lossless audio. Suffix is read from the path part only (query
+# strings may contain anything).
+sub _suffix_quality {
+	my ($url) = @_;
+	$url //= '';
+	$url =~ s/\?.*$//;
+	return 'flac' if $url =~ /\.flac$/i;
+	return 'mp3'  if $url =~ /\.mp3$/i;
+	return 'm4a';
+}
+
 sub _pick {
 	my ($class, $urls, $order) = @_;
 	for my $tier (@$order) {
@@ -1278,7 +1292,8 @@ sub _resolvePC {
 					title      => $meta->{title} // "Track $trackId",
 					authorized => 1,
 					paid       => $meta->{paid} // 0,
-					quality    => $picked =~ /^MP3_/ ? 'mp3' : 'm4a',
+					quality    => $picked eq 'ORIGIN' ? $class->_suffix_quality($url)
+					            : ($picked =~ /^MP3_/ ? 'mp3' : 'm4a'),
 					cover      => $meta->{cover} || '',
 					($bitrate ? (bitrate => $bitrate) : ()),
 					($duration ? (duration => $duration) : ()),
@@ -1382,7 +1397,7 @@ sub _resolveWin {
 				title      => $info->{title} // "Track $trackId",
 				authorized => $info->{isAuthorized} // 1,
 				paid       => $info->{isPaid} // 1,
-				quality    => $url =~ /\.mp3/ ? 'mp3' : 'm4a',
+				quality    => $class->_suffix_quality($url),
 				# 0.1.20: trackInfo carries coverLarge/Middle/Small (probe
 				# 2026-09-10) - needed for the now-playing artwork
 				cover      => $class->_norm_cover(
@@ -1464,7 +1479,7 @@ sub _resolveWeb {
 				title      => $info->{title} // "Track $trackId",
 				authorized => $info->{isAuthorized} // 0,
 				paid       => $info->{isPaid} // 0,
-				quality    => $url =~ /\.mp3/ ? 'mp3' : 'm4a',
+				quality    => $class->_suffix_quality($url),
 				cover      => $class->_norm_cover(
 					$info->{coverLarge} || $info->{coverMiddle} || $info->{coverSmall}),
 				url        => $url,

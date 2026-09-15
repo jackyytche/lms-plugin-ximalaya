@@ -664,6 +664,40 @@ close $fh;
 			&& $m->{duration} == 624 && $m->{cover} =~ /cover\.jpg$/);
 		my $e = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://track/none');
 		check('handler: unknown url -> empty metadata', $e && !scalar keys %$e);
+
+		# 0.1.30: ORIGIN-tier lossless streams (.flac uploads at 1000+ kbps)
+		# must not be labelled AAC anymore
+		check('handler: _suffix_quality reads codec from path suffix',
+			Plugins::Ximalaya::API::_suffix_quality('http://x/aod.cos/a-48K.flac?sig=1') eq 'flac'
+			&& Plugins::Ximalaya::API::_suffix_quality('http://x/a.mp3?sig=1') eq 'mp3'
+			&& Plugins::Ximalaya::API::_suffix_quality('http://x/a.m4a?sig=1') eq 'm4a'
+			&& Plugins::Ximalaya::API::_suffix_quality(undef) eq 'm4a');
+		Plugins::Ximalaya::ProtocolHandler->cache_metadata('xmly://track/flac1', {
+			title => 'flac t', cover => 'https://imagev2.xmcdn.com/storages/x/c.jpg',
+			duration => 300, bitrate => 1058000, quality => 'flac',
+		});
+		my $f = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://track/flac1');
+		check('handler: flac stream type shows FLAC not AAC',
+			$f && $f->{type} eq 'FLAC 1058kbps' && $f->{bitrate} eq '1058kbps');
+		{
+			my $song = bless {}, 'XimaStubSong';
+			*XimaStubSong::streamUrl = sub {
+				my ($s, $u) = @_;
+				$s->{u} = $u if defined $u;
+				return $s->{u};
+			};
+			Slim::Music::Info::reset_remote_meta();
+			Plugins::Ximalaya::ProtocolHandler->_apply_resolve($song, 'xmly://track/flac2', {
+				title => 'x', cover => 'https://imagev2.xmcdn.com/c.jpg',
+				duration => 300, bitrate => 1058000, quality => 'flac',
+				url => 'http://cdn/a.flac?t=1',
+			});
+			my $rm = Slim::Music::Info::remote_meta();
+			my $last = $rm->[-1];
+			check('handler: _apply_resolve publishes audio/flac ct + swaps stream url',
+				$last && $last->[0] eq 'xmly://track/flac2' && $last->[1]{ct} eq 'audio/flac'
+				&& $song->streamUrl eq 'http://cdn/a.flac?t=1');
+		}
 	}
 }
 
