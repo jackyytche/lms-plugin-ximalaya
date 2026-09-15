@@ -191,12 +191,22 @@ sub albumItem {
 	$name .= " - $album->{announcer}" if $album->{announcer};
 	$name .= ' [VIP]' if $album->{paid};
 
+	# 0.1.28: native favourite support. The web UI (Slim::Web::XMLBrowser)
+	# renders an add/remove favourites action for any item carrying a
+	# favorites_url and flags it as already-starred (favorites=2) via
+	# Favorites->hasUrl. Starred entries land in LMS Favourites as
+	# xmly://album/<id> links; myAlbumsHandler merges them back into the
+	# my-albums list. One place here covers EVERY album entry point
+	# (search, ranks, catalog browse, my albums itself).
 	return {
 		name        => $name,
 		image       => $album->{cover},
 		type        => 'link',
 		url         => \&albumHandler,
 		passthrough => [ $album->{id} ],
+		favorites_url   => "xmly://album/$album->{id}",
+		favorites_title => $name,
+		favorites_type  => 'link',
 	};
 }
 
@@ -207,6 +217,9 @@ sub _albumFallbackItem {
 		type        => 'link',
 		url         => \&albumHandler,
 		passthrough => [ $id ],
+		favorites_url   => "xmly://album/$id",
+		favorites_title => "Album $id",
+		favorites_type  => 'link',
 	};
 }
 
@@ -378,8 +391,27 @@ sub trackItem {
 sub myAlbumsHandler {
 	my ($client, $cb, $args) = @_;
 
+	# 0.1.28: two sources, merged. (1) the plugin pref 'albums' (editable in
+	# settings, order preserved) and (2) albums the user starred with the
+	# web UI's native favourites action - those are stored in LMS Favourites
+	# as xmly://album/<id> links (see albumItem). Dedup with the pref list
+	# first. A missing/unreadable Favorites module degrades silently to the
+	# pref-only list.
 	my $raw = $prefs->get('albums') || '';
 	my @ids = grep { /^\d+$/ } split /[\s,;]+/, $raw;
+	my %seen = map { $_ => 1 } @ids;
+
+	my $favs = eval {
+		require Slim::Utils::Favorites;
+		Slim::Utils::Favorites->new($client);
+	};
+	if ($favs) {
+		my $items = eval { $favs->all } || [];
+		for my $fi (@$items) {
+			next unless (($fi->{url} || '') =~ m{^xmly://album/(\d+)});
+			push @ids, $1 unless $seen{$1}++;
+		}
+	}
 
 	unless (@ids) {
 		$cb->({ items => [ { name => cstring($client, 'PLUGIN_XIMALAYA_NOALBUMS'), type => 'text' } ] });

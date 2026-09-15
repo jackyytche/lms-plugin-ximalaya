@@ -16,8 +16,8 @@ PLUGIN_XIMALAYA_MYALBUMS
 	ZH_CN	我的专辑
 
 PLUGIN_XIMALAYA_NOALBUMS
-	EN	No albums yet - add album IDs in plugin settings
-	ZH_CN	还没有专辑 - 请在插件设置里添加专辑 ID
+	EN	No albums yet - browse/search an album and use the web UI favourites action on it, or add album IDs in plugin settings
+	ZH_CN	还没有专辑 - 打开任意专辑后在网页界面用收藏动作（⋮）加入，或在插件设置里添加专辑 ID
 
 PLUGIN_XIMALAYA_PASTE
 	EN	Paste album/track link or ID

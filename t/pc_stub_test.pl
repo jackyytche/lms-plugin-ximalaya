@@ -873,6 +873,58 @@ close $fh;
 	}
 }
 
+# ------------------------------------------- my albums / favourites 0.1.28
+{
+	require Slim::Utils::Favorites;
+
+	# albumItem exposes the native favourites metadata (web UI renders the
+	# star action from these - Slim::Web::XMLBrowser L1036-1040)
+	{
+		my $it = Plugins::Ximalaya::Plugin::albumItem({
+			id => 82080513, title => '郭德纲相声精选', announcer => '德云社',
+			cover => 'https://x/y.jpg', paid => 0,
+		});
+		check('fav: albumItem exposes xmly://album favourites url + title + type',
+			$it->{favorites_url} eq 'xmly://album/82080513'
+			&& $it->{favorites_title} =~ /郭德纲相声精选/
+			&& $it->{favorites_type} eq 'link');
+		my $fb = Plugins::Ximalaya::Plugin::_albumFallbackItem(12345);
+		check('fav: fallback item is favourites-capable too',
+			$fb->{favorites_url} eq 'xmly://album/12345');
+	}
+
+	# myAlbums merge: pref ids + LMS favourites, dedup, pref order first
+	{
+		my $saved = $prefs->get('albums');
+		$prefs->set('albums', "111\n222");
+
+		Slim::Utils::Favorites::set_store_rows(
+			['xmly://album/333', 'Fav Album 333'],
+			['xmly://album/111', 'dup of pref 111'],
+			['xmly://track/999', 'not an album - ignored'],
+		);
+		local *Plugins::Ximalaya::API::albumInfo = sub {
+			my ($class, $id, $cb, $ecb) = @_;
+			$cb->({ id => $id, title => "Album $id" });
+		};
+		my ($out, $client) = ({}, bless({}, 'StubClient'));
+		Plugins::Ximalaya::Plugin::myAlbumsHandler($client, sub { $out = shift });
+		my $names = join('|', map { $_->{name} || '?' } @{ $out->{items} || [] });
+		check('fav: myAlbums merges pref ids + favourites (dedup, pref first)',
+			@{ $out->{items} || [] } == 3
+			&& $names =~ /Album 111/ && $names =~ /Album 222/ && $names =~ /Album 333/);
+
+		$prefs->set('albums', '');
+		Slim::Utils::Favorites::set_store_rows();
+		Plugins::Ximalaya::Plugin::myAlbumsHandler($client, sub { $out = shift });
+		check('fav: empty pref + empty favourites -> NOALBUMS hint',
+			@{ $out->{items} || [] } == 1 && ($out->{items}[0]{name} || '') ne '');
+
+		$prefs->set('albums', $saved);
+		Slim::Utils::Favorites::set_store_rows();
+	}
+}
+
 # --------------------------------------------------- Categories menu routing
 {
 	require Plugins::Ximalaya::Categories;
