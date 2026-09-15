@@ -775,6 +775,104 @@ close $fh;
 		&& $expires eq '30min') if defined $url;
 }
 
+# ------------------------------------------------------- m-channel search 0.1.27
+{
+	# pure parser against the probe3 gold (legacy docs shape)
+	my ($albums, $total, $err) = $api->_parse_search_albums($fx->{searchOk});
+	check('search: parsed 2 albums + server total 1380',
+		$albums && @$albums == 2 && $total == 1380 && !defined $err);
+	check('search: id/title/announcer mapping (docs shape)',
+		$albums->[0]{id} eq '82080513' && $albums->[0]{title} =~ /郭德纲/
+		&& $albums->[0]{announcer} eq '喜马相声来乐');
+	check('search: http cover_path absolutized to https',
+		$albums->[0]{cover} =~ m{^https://imagev2\.xmcdn\.com/}
+		&& $albums->[0]{cover} !~ m{^http://});
+	check('search: string tracks count -> number',
+		$albums->[0]{tracksCount} == 97 && $albums->[1]{tracksCount} == 143);
+	check('search: string boolean is_paid "False" -> 0 (no false VIP tag)',
+		$albums->[0]{paid} == 0 && $albums->[1]{paid} == 0);
+
+	my ($empty, $etotal, $eerr) = $api->_parse_search_albums($fx->{searchEmpty});
+	check('search: empty albums -> ([], total, undef)',
+		ref $empty eq 'ARRAY' && @$empty == 0 && !defined $eerr);
+
+	my ($sf, $sft, $sferr) = $api->_parse_search_albums($fx->{searchSoftFail});
+	check('search: soft-fail (isIllegal + sq marker) -> risk, not empty',
+		!defined $sf && $sferr eq 'risk');
+
+	# wiring: anonymous -> fail fast with the login code, zero network
+	{
+		my $saved_cookie = $prefs->get('cookie');
+		$prefs->set('cookie', '1&_device=win32&x&4.0.14');   # no 1&_token
+		my ($net, $sign_called);
+		local *Plugins::Ximalaya::API::_json_get = sub { $net = 1 };
+		local *Plugins::Ximalaya::Sign::gen = sub { $sign_called = 1 };
+		my ($got, $via);
+		$api->searchAlbums('kw', 1, sub { $via = 'cb' }, sub { $got = shift; $via = 'ecb' });
+		check('search: anonymous -> ecb(1001) before sign/network',
+			$via eq 'ecb' && $got eq '1001' && !$net && !$sign_called);
+		$prefs->set('cookie', $saved_cookie);
+	}
+
+	# wiring: signed path - route shape, fresh xm-sign, mobile UA, m referer
+	{
+		my $saved_cookie = $prefs->get('cookie');
+		$prefs->set('cookie', '1&_token=98645391&STUBTOKEN; 1&_device=win32&x&4.0.14');
+		local *Plugins::Ximalaya::Sign::gen = sub {
+			my ($class, $cb, $ecb) = @_; $cb->('STUBSIGN');
+		};
+		my ($url, $headers);
+		local *Plugins::Ximalaya::API::_json_get = sub {
+			my ($class, $u, $h, $cb, $ecb, $cache) = @_;
+			($url, $headers) = ($u, $h);
+			$cb->($fx->{searchOk});
+			return;
+		};
+		my ($via, $out, $out_total);
+		$api->searchAlbums('郭德纲', 2,
+			sub { $via = 'cb'; ($out, $out_total) = @_; },
+			sub { $via = 'ecb' });
+		check('search: m route + percent-encoded kw + page/rows protocol',
+			$url =~ m{^https://m\.ximalaya\.com/m-revision/page/search\?kw=%E9%83%AD%E5%BE%B7%E7%BA%B2&core=all&page=2&rows=20$});
+		check('search: fresh xm-sign + mobile UA + m referer + user cookie',
+			$headers->{'xm-sign'} eq 'STUBSIGN'
+			&& $headers->{'User-Agent'} =~ /Android/
+			&& $headers->{'Referer'} eq 'https://m.ximalaya.com/search'
+			&& $headers->{Cookie} =~ /1&_token=98645391&STUBTOKEN/);
+		check('search: cb(albums, server total) pass-through',
+			$via eq 'cb' && @$out == 2 && $out_total == 1380);
+
+		# ret=303 needLogin (stale cookie) -> ecb(303) via _check_ret
+		my $got303;
+		local *Plugins::Ximalaya::API::_json_get = sub {
+			my ($class, $u, $h, $cb, $ecb) = @_; $ecb->(undef) if 0; $cb->($fx->{searchNeedLogin});
+		};
+		$api->searchAlbums('kw', 1, sub {}, sub { $got303 = shift });
+		check('search: ret=303 needLogin -> ecb(303)', $got303 == 303);
+
+		$prefs->set('cookie', $saved_cookie);
+	}
+
+	# Plugin menu handler: windowing against the server page width (20)
+	{
+		local *Plugins::Ximalaya::API::searchAlbums = sub {
+			my ($class, $kw, $page, $cb, $ecb) = @_;
+			my ($al, $t) = $api->_parse_search_albums($fx->{searchOk});
+			$cb->($al, $t);
+		};
+		my ($out, $client) = ({}, bless({}, 'StubClient'));
+		Plugins::Ximalaya::Plugin::searchHandler($client,
+			sub { $out = shift }, { search => 'kw', index => 20, quantity => 50 });
+		check('menu: search windowing index=20 -> page2 offset=20 + total',
+			$out->{offset} == 20 && $out->{total} == 1380
+			&& @{ $out->{items} || [] } == 2);
+		Plugins::Ximalaya::Plugin::searchHandler($client,
+			sub { $out = shift }, { search => 'kw', index => 5, quantity => 50 });
+		check('menu: search windowing index=5 stays in page1 (offset=0)',
+			$out->{offset} == 0 && @{ $out->{items} || [] } == 2);
+	}
+}
+
 # --------------------------------------------------- Categories menu routing
 {
 	require Plugins::Ximalaya::Categories;

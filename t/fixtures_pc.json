@@ -1,293 +1,490 @@
 {
-  "comment": "0.1.12 pc channel fixtures. showFree/showLast shapes from the real 2026-09-10 probes (m0/pc_playshow_free.json, trimmed; anonymous AND plugin-identity both verified). qualityFree trimmed from m0/trackquality_1012852891.json (real, 2026-09-10). winvector/winPlainUrl are the 2026-08-16 device=win baseInfo capture from m0/Ximalaya-Downloader-Next/tests/test_source_pc.py (BASE_INFO_VIP / PAID_URL) - captured DATA, not copied code.",
-  "showFree": {
-    "ret": 200,
-    "data": {
-      "uid": 0,
-      "albumId": 12148879,
-      "sort": 0,
-      "pageNum": 1,
-      "pageSize": 30,
-      "tracksAudioPlay": [
-        {
-          "index": 1,
-          "trackId": 549382127,
-          "trackName": "《西溪的晴雨》作者：郁达夫 朗诵：滔声美文",
-          "trackUrl": "/sound/549382127",
-          "trackCoverPath": "storages/56b8-audiofreehighqps/27/45/GMCoOScJjrMoAAKtOQKiZobF.jpeg",
-          "albumId": 12148879,
-          "albumName": "名家诵读",
-          "anchorId": 69605087,
-          "duration": 458,
-          "isLike": false,
-          "isCopyright": true
-        },
-        {
-          "index": 2,
-          "trackId": 170449914,
-          "trackName": "《雪》作者：鲁迅 朗诵：朱军、徐俐",
-          "trackUrl": "/sound/170449914",
-          "trackCoverPath": "//imagev2.xmcdn.com/storages/0cfb-audiofreehighqps/F8/BE/GMCoOR8JYZlTAAKtOQKS8T35.jpeg",
-          "albumId": 12148879,
-          "albumName": "名家诵读",
-          "anchorId": 69605087,
-          "duration": 204,
-          "isLike": false,
-          "isCopyright": true
-        }
-      ],
-      "hasMore": true
+ "comment": "0.1.12 pc channel fixtures. showFree/showLast shapes from the real 2026-09-10 probes (m0/pc_playshow_free.json, trimmed; anonymous AND plugin-identity both verified). qualityFree trimmed from m0/trackquality_1012852891.json (real, 2026-09-10). winvector/winPlainUrl are the 2026-08-16 device=win baseInfo capture from m0/Ximalaya-Downloader-Next/tests/test_source_pc.py (BASE_INFO_VIP / PAID_URL) - captured DATA, not copied code.",
+ "showFree": {
+  "ret": 200,
+  "data": {
+   "uid": 0,
+   "albumId": 12148879,
+   "sort": 0,
+   "pageNum": 1,
+   "pageSize": 30,
+   "tracksAudioPlay": [
+    {
+     "index": 1,
+     "trackId": 549382127,
+     "trackName": "《西溪的晴雨》作者：郁达夫 朗诵：滔声美文",
+     "trackUrl": "/sound/549382127",
+     "trackCoverPath": "storages/56b8-audiofreehighqps/27/45/GMCoOScJjrMoAAKtOQKiZobF.jpeg",
+     "albumId": 12148879,
+     "albumName": "名家诵读",
+     "anchorId": 69605087,
+     "duration": 458,
+     "isLike": false,
+     "isCopyright": true
+    },
+    {
+     "index": 2,
+     "trackId": 170449914,
+     "trackName": "《雪》作者：鲁迅 朗诵：朱军、徐俐",
+     "trackUrl": "/sound/170449914",
+     "trackCoverPath": "//imagev2.xmcdn.com/storages/0cfb-audiofreehighqps/F8/BE/GMCoOR8JYZlTAAKtOQKS8T35.jpeg",
+     "albumId": 12148879,
+     "albumName": "名家诵读",
+     "anchorId": 69605087,
+     "duration": 204,
+     "isLike": false,
+     "isCopyright": true
     }
-  },
-  "showLast": {
-    "ret": 200,
-    "data": {
-      "albumId": 12148879,
-      "pageNum": 2,
-      "pageSize": 30,
-      "tracksAudioPlay": [
-        {
-          "index": 31,
-          "trackId": 170161000,
-          "trackName": "最后一集",
-          "trackUrl": "/sound/170161000",
-          "trackCoverPath": "storages/aa/last.jpeg",
-          "duration": 100,
-          "isCopyright": true
-        }
-      ],
-      "hasMore": false
-    }
-  },
-  "showRisk": {
-    "ret": 200,
-    "data": {
-      "riskLevel": "high"
-    }
-  },
-  "showEmpty": {
-    "ret": 200,
-    "data": {}
-  },
-  "qualityFree": {
-    "ret": 0,
-    "msg": "success",
-    "data": {
-      "trackQualities": [
-        { "type": "MP3_64", "descText": "兼顾收听体验和省流需求", "bitRate": "48kbps", "needVip": false }
-      ],
-      "debugInfo": {
-        "debugDetailMap": {
-          "detailTrackDto": {
-            "result": {
-              "success": true,
-              "trackId": 1012852891,
-              "title": "9.8伊朗打航母神器公布了！与大国的差距在哪？",
-              "isPublic": true,
-              "isPaid": false,
-              "albumId": 81078584,
-              "duration": 1065,
-              "albumTitle": "音频版：国际大事评论|大国博弈|军事科普|科技讲解",
-              "coverPath": "storages/ea67-audiofreehighqps/0D/15/GAqhRAAOdaITAAO9_gTT1zKT.jpeg",
-              "playPathDto": {
-                "playPath32": "http://aod.cos.tx.xmcdn.com/storages/3734-audiofreehighqps/29/E6/free_32.mp3",
-                "mp332Size": 4261765,
-                "playPath64": "http://aod.cos.tx.xmcdn.com/storages/f968-audiofreehighqps/70/B4/free_64.mp3",
-                "mp364Size": 8523276,
-                "playPathHq": "",
-                "hqSize": 0,
-                "playPathAacV164": "http://aod.cos.tx.xmcdn.com/storages/b3c0-audiofreehighqps/6D/57/free_164.m4a",
-                "aacV164Size": 8625530,
-                "playPathAacV224": "http://aod.cos.tx.xmcdn.com/storages/0071-audiofreehighqps/9A/CB/free_224.m4a",
-                "aacV224Size": 3298176,
-                "downloadPath": "http://download.ali.xmcdn.com/storages/1dcc/free_dl.aac",
-                "downloadSize": 4261884,
-                "downloadAacPath": "http://download.ali.xmcdn.com/storages/0071/free_dla.m4a",
-                "downloadAacSize": 3298176,
-                "originPlayPath": "http://aod.cos.tx.xmcdn.com/storages/8fc0-audiofreehighqps/99/9C/free_origin.mp3",
-                "originSize": 34273058
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "qualityPaid": {
-    "ret": 0,
-    "msg": "success",
-    "data": {
-      "debugInfo": {
-        "debugDetailMap": {
-          "detailTrackDto": {
-            "result": {
-              "success": true,
-              "trackId": 759074956,
-              "title": "开局和师姐双修，我黑化了-第001集",
-              "isPaid": true,
-              "albumId": 83701277,
-              "albumTitle": "VIP 专辑",
-              "playPathDto": {
-                "aacV164Size": 778633,
-                "hqSize": 1545465
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "winvector": {
-    "ret": 0,
-    "trackInfo": {
-      "trackId": 562111701,
-      "title": "VIP 测试曲目",
-      "isPaid": true,
-      "isAuthorized": true,
-      "isAntiLeech": true,
-      "playUrlList": [
-        {
-          "type": "M4A_64",
-          "fileSize": 778633,
-          "url": "pX7rCko1ZPLJXbyU3qjcDqAp042BK5yCrhhNlUZEBd6lHKILemhbvHD1YkhQ7FDbZ6QeFPVzxfDH4ro44BplhjCgjgi1xHnlrJR4LEJnIxSIqEnytSBJZBuLBAEdE9dCViixIhz8NdLDFMG_tpDh88M2_tnqioJ8JnJYj9h6bGNGrP3_G4oOHrz6CGZi024CBS40BG45LdipAuHAOq7_CW_pp9Vb9GgSgezuKF1AZhO0tGhEOgUN0QHjzR2N8BTTIFO9u4CefQFTcaN3xzaDV7v7sxPZBhl73fvYnF153Rg"
-        }
-      ]
-    }
-  },
-  "winPlainUrl": "https://audiopay.cos.tx.xmcdn.com/download/1.0.0/storages/3cf3-audiopay/85/1E/GKwRIasG02T_AA_K1QGTsZLv-aacv2-48K.m4a?sign=e3707760ec267ee5610476fb609dbde6&buy_key=FM&timestamp=1786865983207000&token=8989&duration=127",
-  "mobileTrack": {
-    "ret": 0,
-    "data": {
-      "list": [
-        {
-          "trackId": 759074956,
-          "title": "第001集 VIP",
-          "isPaid": true,
-          "duration": 624,
-          "orderNo": 1,
-          "coverSmall": "http://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E1/GKwRIasMxSA5AA.jpg",
-          "nickname": "头陀渊讲故事"
-        },
-        {
-          "trackId": 759074957,
-          "title": "第002集 已购",
-          "isPaid": false,
-          "duration": 600,
-          "orderNo": 2,
-          "coverSmall": "https://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E2/GKwRIasMxSA5AB.jpg",
-          "nickname": "头陀渊讲故事"
-        }
-      ],
-      "pageId": 1,
-      "pageSize": 50,
-      "maxPageId": 28,
-      "totalCount": 1388
-    }
-  },
-  "mobileEmpty": {
-    "ret": 0,
-    "data": { "list": [], "pageId": 1, "pageSize": 50, "maxPageId": 0, "totalCount": 0 }
-  },
-  "rankTabs": {
-    "ret": 200,
-    "msg": "rank",
-    "data": {
-      "tabLists": [
-        {
-          "id": 1,
-          "name": "全站",
-          "position": 1,
-          "sceneId": 1,
-          "tabWraps": [
-            { "tabId": 1, "id": 1, "name": "热播", "position": 1, "rankingId": 100006 },
-            { "tabId": 1, "id": 79, "name": "免费", "position": 5, "rankingId": 100007 },
-            { "tabId": 1, "id": 318, "name": "VIP", "position": 7, "rankingId": 100297 }
-          ]
-        },
-        {
-          "id": 3,
-          "name": "相声评书",
-          "position": 3,
-          "sceneId": 1,
-          "tabWraps": [
-            { "tabId": 3, "id": 1, "name": "热门", "position": 1, "rankingId": 100088 },
-            { "tabId": 3, "id": 263, "name": "评书", "position": 4, "rankingId": 100090 }
-          ]
-        }
-      ]
-    }
-  },
-  "rankTabsEmpty": {
-    "ret": 200,
-    "data": {}
-  },
-  "rankElement": {
-    "ret": 200,
-    "data": {
-      "rankingIds": [100006],
-      "currentUid": 98645391,
-      "rankList": [
-        {
-          "count": 2,
-          "ids": [108239077, 81519744],
-          "coverPath": "http://fdfs.xmcdn.com/storages/2044-audiofreehighqps/FD/C6/GKwRIUEHFbW-AABTmAGtTEY9.jpg",
-          "title": "热播榜",
-          "rankId": 100006,
-          "subtitle": "全站每日最热的专辑排名",
-          "shareUrl": "",
-          "contentType": 2,
-          "albums": [
-            {
-              "id": 108239077,
-              "albumTitle": "青山丨头陀渊演播丨轻松搞笑丨重生穿越丨古代权谋丨VIP免费 | 多人有声剧",
-              "customTitle": "若你问，谁是这江湖里的不归客？",
-              "albumUrl": "/album/108239077",
-              "cover": "storages/f5df-audiofreehighqps/96/70/GKwRIasMxSA5AAnJrQQizkhE.jpeg",
-              "anchorUrl": "/zhubo/10778196",
-              "playCount": 1294189299,
-              "trackCount": 1183,
-              "isPaid": true,
-              "vipType": 2,
-              "anchorName": "头陀渊讲故事",
-              "isFinished": 1,
-              "albumSubscript": 2,
-              "categoryId": 3,
-              "categoryCode": "youshengshu",
-              "categoryTitle": "有声书"
-            },
-            {
-              "id": 81519744,
-              "albumTitle": "蛊真人| 大爱仙尊|暗黑反派鼻祖|网文三大神作",
-              "customTitle": "不过是些许风霜罢了",
-              "albumUrl": "/album/81519744",
-              "cover": "storages/fbf9-audiofreehighqps/48/F5/GKwRIUEKBineAAbfawLNGKZa.jpeg",
-              "playCount": 2023195337,
-              "trackCount": 3434,
-              "isPaid": false,
-              "anchorName": "老宝玉讲故事",
-              "isFinished": 0
-            }
-          ]
-        }
-      ]
-    }
-  },
-  "rankElementEmpty": {
-    "ret": 200,
-    "data": { "rankingIds": [999], "rankList": [ { "count": 0, "ids": [], "albums": [] } ] }
-  },
-  "albumSimple": {
-    "ret": 200,
-    "data": {
-      "albumId": 83701277,
-      "albumPageMainInfo": {
-        "albumTitle": "开局和师姐双修，我黑化了",
-        "anchorName": "头陀渊讲故事",
-        "cover": "//imagev2.xmcdn.com/storages/16c3-audiofreehighqps/CE/88/GAqhVp8MSkJhAAM2DAPhxNQf.jpeg",
-        "isPaid": true,
-        "isFinished": 2,
-        "playCount": 383174871
-      }
-    }
+   ],
+   "hasMore": true
   }
+ },
+ "showLast": {
+  "ret": 200,
+  "data": {
+   "albumId": 12148879,
+   "pageNum": 2,
+   "pageSize": 30,
+   "tracksAudioPlay": [
+    {
+     "index": 31,
+     "trackId": 170161000,
+     "trackName": "最后一集",
+     "trackUrl": "/sound/170161000",
+     "trackCoverPath": "storages/aa/last.jpeg",
+     "duration": 100,
+     "isCopyright": true
+    }
+   ],
+   "hasMore": false
+  }
+ },
+ "showRisk": {
+  "ret": 200,
+  "data": {
+   "riskLevel": "high"
+  }
+ },
+ "showEmpty": {
+  "ret": 200,
+  "data": {}
+ },
+ "qualityFree": {
+  "ret": 0,
+  "msg": "success",
+  "data": {
+   "trackQualities": [
+    {
+     "type": "MP3_64",
+     "descText": "兼顾收听体验和省流需求",
+     "bitRate": "48kbps",
+     "needVip": false
+    }
+   ],
+   "debugInfo": {
+    "debugDetailMap": {
+     "detailTrackDto": {
+      "result": {
+       "success": true,
+       "trackId": 1012852891,
+       "title": "9.8伊朗打航母神器公布了！与大国的差距在哪？",
+       "isPublic": true,
+       "isPaid": false,
+       "albumId": 81078584,
+       "duration": 1065,
+       "albumTitle": "音频版：国际大事评论|大国博弈|军事科普|科技讲解",
+       "coverPath": "storages/ea67-audiofreehighqps/0D/15/GAqhRAAOdaITAAO9_gTT1zKT.jpeg",
+       "playPathDto": {
+        "playPath32": "http://aod.cos.tx.xmcdn.com/storages/3734-audiofreehighqps/29/E6/free_32.mp3",
+        "mp332Size": 4261765,
+        "playPath64": "http://aod.cos.tx.xmcdn.com/storages/f968-audiofreehighqps/70/B4/free_64.mp3",
+        "mp364Size": 8523276,
+        "playPathHq": "",
+        "hqSize": 0,
+        "playPathAacV164": "http://aod.cos.tx.xmcdn.com/storages/b3c0-audiofreehighqps/6D/57/free_164.m4a",
+        "aacV164Size": 8625530,
+        "playPathAacV224": "http://aod.cos.tx.xmcdn.com/storages/0071-audiofreehighqps/9A/CB/free_224.m4a",
+        "aacV224Size": 3298176,
+        "downloadPath": "http://download.ali.xmcdn.com/storages/1dcc/free_dl.aac",
+        "downloadSize": 4261884,
+        "downloadAacPath": "http://download.ali.xmcdn.com/storages/0071/free_dla.m4a",
+        "downloadAacSize": 3298176,
+        "originPlayPath": "http://aod.cos.tx.xmcdn.com/storages/8fc0-audiofreehighqps/99/9C/free_origin.mp3",
+        "originSize": 34273058
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "qualityPaid": {
+  "ret": 0,
+  "msg": "success",
+  "data": {
+   "debugInfo": {
+    "debugDetailMap": {
+     "detailTrackDto": {
+      "result": {
+       "success": true,
+       "trackId": 759074956,
+       "title": "开局和师姐双修，我黑化了-第001集",
+       "isPaid": true,
+       "albumId": 83701277,
+       "albumTitle": "VIP 专辑",
+       "playPathDto": {
+        "aacV164Size": 778633,
+        "hqSize": 1545465
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "winvector": {
+  "ret": 0,
+  "trackInfo": {
+   "trackId": 562111701,
+   "title": "VIP 测试曲目",
+   "isPaid": true,
+   "isAuthorized": true,
+   "isAntiLeech": true,
+   "playUrlList": [
+    {
+     "type": "M4A_64",
+     "fileSize": 778633,
+     "url": "pX7rCko1ZPLJXbyU3qjcDqAp042BK5yCrhhNlUZEBd6lHKILemhbvHD1YkhQ7FDbZ6QeFPVzxfDH4ro44BplhjCgjgi1xHnlrJR4LEJnIxSIqEnytSBJZBuLBAEdE9dCViixIhz8NdLDFMG_tpDh88M2_tnqioJ8JnJYj9h6bGNGrP3_G4oOHrz6CGZi024CBS40BG45LdipAuHAOq7_CW_pp9Vb9GgSgezuKF1AZhO0tGhEOgUN0QHjzR2N8BTTIFO9u4CefQFTcaN3xzaDV7v7sxPZBhl73fvYnF153Rg"
+    }
+   ]
+  }
+ },
+ "winPlainUrl": "https://audiopay.cos.tx.xmcdn.com/download/1.0.0/storages/3cf3-audiopay/85/1E/GKwRIasG02T_AA_K1QGTsZLv-aacv2-48K.m4a?sign=e3707760ec267ee5610476fb609dbde6&buy_key=FM&timestamp=1786865983207000&token=8989&duration=127",
+ "mobileTrack": {
+  "ret": 0,
+  "data": {
+   "list": [
+    {
+     "trackId": 759074956,
+     "title": "第001集 VIP",
+     "isPaid": true,
+     "duration": 624,
+     "orderNo": 1,
+     "coverSmall": "http://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E1/GKwRIasMxSA5AA.jpg",
+     "nickname": "头陀渊讲故事"
+    },
+    {
+     "trackId": 759074957,
+     "title": "第002集 已购",
+     "isPaid": false,
+     "duration": 600,
+     "orderNo": 2,
+     "coverSmall": "https://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E2/GKwRIasMxSA5AB.jpg",
+     "nickname": "头陀渊讲故事"
+    }
+   ],
+   "pageId": 1,
+   "pageSize": 50,
+   "maxPageId": 28,
+   "totalCount": 1388
+  }
+ },
+ "mobileEmpty": {
+  "ret": 0,
+  "data": {
+   "list": [],
+   "pageId": 1,
+   "pageSize": 50,
+   "maxPageId": 0,
+   "totalCount": 0
+  }
+ },
+ "rankTabs": {
+  "ret": 200,
+  "msg": "rank",
+  "data": {
+   "tabLists": [
+    {
+     "id": 1,
+     "name": "全站",
+     "position": 1,
+     "sceneId": 1,
+     "tabWraps": [
+      {
+       "tabId": 1,
+       "id": 1,
+       "name": "热播",
+       "position": 1,
+       "rankingId": 100006
+      },
+      {
+       "tabId": 1,
+       "id": 79,
+       "name": "免费",
+       "position": 5,
+       "rankingId": 100007
+      },
+      {
+       "tabId": 1,
+       "id": 318,
+       "name": "VIP",
+       "position": 7,
+       "rankingId": 100297
+      }
+     ]
+    },
+    {
+     "id": 3,
+     "name": "相声评书",
+     "position": 3,
+     "sceneId": 1,
+     "tabWraps": [
+      {
+       "tabId": 3,
+       "id": 1,
+       "name": "热门",
+       "position": 1,
+       "rankingId": 100088
+      },
+      {
+       "tabId": 3,
+       "id": 263,
+       "name": "评书",
+       "position": 4,
+       "rankingId": 100090
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "rankTabsEmpty": {
+  "ret": 200,
+  "data": {}
+ },
+ "rankElement": {
+  "ret": 200,
+  "data": {
+   "rankingIds": [
+    100006
+   ],
+   "currentUid": 98645391,
+   "rankList": [
+    {
+     "count": 2,
+     "ids": [
+      108239077,
+      81519744
+     ],
+     "coverPath": "http://fdfs.xmcdn.com/storages/2044-audiofreehighqps/FD/C6/GKwRIUEHFbW-AABTmAGtTEY9.jpg",
+     "title": "热播榜",
+     "rankId": 100006,
+     "subtitle": "全站每日最热的专辑排名",
+     "shareUrl": "",
+     "contentType": 2,
+     "albums": [
+      {
+       "id": 108239077,
+       "albumTitle": "青山丨头陀渊演播丨轻松搞笑丨重生穿越丨古代权谋丨VIP免费 | 多人有声剧",
+       "customTitle": "若你问，谁是这江湖里的不归客？",
+       "albumUrl": "/album/108239077",
+       "cover": "storages/f5df-audiofreehighqps/96/70/GKwRIasMxSA5AAnJrQQizkhE.jpeg",
+       "anchorUrl": "/zhubo/10778196",
+       "playCount": 1294189299,
+       "trackCount": 1183,
+       "isPaid": true,
+       "vipType": 2,
+       "anchorName": "头陀渊讲故事",
+       "isFinished": 1,
+       "albumSubscript": 2,
+       "categoryId": 3,
+       "categoryCode": "youshengshu",
+       "categoryTitle": "有声书"
+      },
+      {
+       "id": 81519744,
+       "albumTitle": "蛊真人| 大爱仙尊|暗黑反派鼻祖|网文三大神作",
+       "customTitle": "不过是些许风霜罢了",
+       "albumUrl": "/album/81519744",
+       "cover": "storages/fbf9-audiofreehighqps/48/F5/GKwRIUEKBineAAbfawLNGKZa.jpeg",
+       "playCount": 2023195337,
+       "trackCount": 3434,
+       "isPaid": false,
+       "anchorName": "老宝玉讲故事",
+       "isFinished": 0
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "rankElementEmpty": {
+  "ret": 200,
+  "data": {
+   "rankingIds": [
+    999
+   ],
+   "rankList": [
+    {
+     "count": 0,
+     "ids": [],
+     "albums": []
+    }
+   ]
+  }
+ },
+ "albumSimple": {
+  "ret": 200,
+  "data": {
+   "albumId": 83701277,
+   "albumPageMainInfo": {
+    "albumTitle": "开局和师姐双修，我黑化了",
+    "anchorName": "头陀渊讲故事",
+    "cover": "//imagev2.xmcdn.com/storages/16c3-audiofreehighqps/CE/88/GAqhVp8MSkJhAAM2DAPhxNQf.jpeg",
+    "isPaid": true,
+    "isFinished": 2,
+    "playCount": 383174871
+   }
+  }
+ },
+ "searchOk": {
+  "ret": 0,
+  "data": {
+   "albumViews": {
+    "total": 1380,
+    "albums": [
+     {
+      "albumInfo": {
+       "play": 394312965,
+       "user_source": "1",
+       "cover_path": "http://imagev2.xmcdn.com/storages/dcd0-audiofreehighqps/B3/86/GKwRIW4KNKPiAAsd_ALdFHg9.jpeg!op_type=3&columns=290&rows=290&magick=png",
+       "title": "【无唱助眠】郭德纲于谦｜无唱相声合集，伴你入睡",
+       "uid": 1000211,
+       "category_id": 12,
+       "intro": "本专辑精选郭德纲、于谦“黄金搭档”逗乐合集，已去除唱段内容，无痛快乐入睡！中国有句老话，来都来了，总得听一下吧～听郭德纲和于谦的相声是许多人放松心情、帮助入眠的好方式。幽默风趣的对话不仅能让人开心一笑，还能在轻松的氛围中逐渐入睡。如果你...",
+       "id": 82080513,
+       "is_paid": false,
+       "is_finished": 0,
+       "tags": "",
+       "category_title": "相声评书",
+       "created_at": 1717494398000,
+       "albumType": 0,
+       "type": "1",
+       "is_v": true,
+       "refund_support_type": 0,
+       "count_comment": 378,
+       "score": 8.6,
+       "price_type_id": 0,
+       "updated_at": 1785132838000,
+       "isVipFree": false,
+       "nickname": "喜马相声来乐",
+       "custom_title": "欢乐伴睡，远离失眠困扰",
+       "verify_type": 2,
+       "vipFreeType": 0,
+       "albumVipPayType": 0,
+       "serialState": 0,
+       "price_type_enum": 0,
+       "tracks": 97,
+       "isNoCopyright": false,
+       "comments_count": 0,
+       "price_types": []
+      },
+      "pageUriInfo": {
+       "id": 82080513,
+       "categoryId": 12,
+       "categoryName": "相声评书",
+       "categoryCode": "xiangsheng",
+       "pinyin": "xiangsheng",
+       "url": "/album/82080513"
+      }
+     },
+     {
+      "albumInfo": {
+       "play": 3796110735,
+       "user_source": "2",
+       "cover_path": "http://imagev2.xmcdn.com/storages/5a86-audiofreehighqps/D8/E5/GKwRIJEFfkl9AAOIigD9zcBJ.png!op_type=3&columns=290&rows=290&magick=png",
+       "title": "郭德纲21年相声精选",
+       "uid": 1000202,
+       "category_id": 12,
+       "intro": "爆料不断的历年经典相声",
+       "recommend_reason": "爆料不断的历年经典相声",
+       "id": 9723091,
+       "is_paid": false,
+       "is_finished": 1,
+       "tags": "郭德纲,于谦,对口,相声",
+       "category_title": "相声评书",
+       "created_at": 1501577741000,
+       "albumType": 0,
+       "type": "1",
+       "is_v": true,
+       "refund_support_type": 0,
+       "count_comment": 107695,
+       "score": 9.4,
+       "price_type_id": 0,
+       "updated_at": 1785132841000,
+       "isVipFree": false,
+       "nickname": "德云社郭德纲相声VIP",
+       "custom_title": "21年风雨同行，郭德纲官方正版",
+       "verify_type": 2,
+       "vipFreeType": 0,
+       "albumVipPayType": 0,
+       "serialState": 1,
+       "price_type_enum": 0,
+       "tracks": 143,
+       "isNoCopyright": false,
+       "comments_count": 0,
+       "price_types": []
+      },
+      "pageUriInfo": {
+       "id": 9723091,
+       "categoryId": 12,
+       "categoryName": "相声评书",
+       "categoryCode": "xiangsheng",
+       "pinyin": "xiangsheng",
+       "url": "/album/9723091"
+      }
+     }
+    ],
+    "pageSize": 5,
+    "currentPage": 1
+   }
+  }
+ },
+ "searchSoftFail": {
+  "ret": 0,
+  "data": {
+   "albumViews": {
+    "albums": [],
+    "pageSize": 20,
+    "currentPage": 1
+   },
+   "trackViews": {
+    "tracks": [],
+    "pageSize": 20,
+    "currentPage": 1
+   },
+   "recommendItems": [
+    {
+     "id": 291718
+    }
+   ],
+   "sq": "webtk缺失",
+   "isIllegal": true
+  }
+ },
+ "searchEmpty": {
+  "ret": 0,
+  "data": {
+   "albumViews": {
+    "albums": [],
+    "pageSize": 20,
+    "currentPage": 1
+   }
+  }
+ },
+ "searchNeedLogin": {
+  "ret": 303,
+  "needLogin": true,
+  "loginUrl": "https://m.ximalaya.com/login"
+ }
 }

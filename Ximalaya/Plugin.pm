@@ -139,6 +139,10 @@ sub categoriesFeed {
 
 # ------------------------------------------------------------------- search
 
+# 0.1.27: m-channel search with native windowing. The server page width is
+# M_SEARCH_ROWS (20; it clamps rows), NOT the UI quantity - so the page index
+# is derived from $args->{index} against that width, and the reply reports
+# { items, offset, total } for the UI pager exactly like albumHandler.
 sub searchHandler {
 	my ($client, $cb, $args) = @_;
 	my $search = $args->{search} || '';
@@ -153,11 +157,21 @@ sub searchHandler {
 		return;
 	}
 
+	my $rows  = Plugins::Ximalaya::API::M_SEARCH_ROWS();
+	my $index = $args->{index} || 0;
+	my $page  = int($index / $rows) + 1;
+	my $offset = ($page - 1) * $rows;
+
 	Plugins::Ximalaya::API->searchAlbums(
 		$search,
+		$page,
 		sub {
-			my ($albums) = @_;
-			$cb->({ items => [ map { albumItem($_) } @$albums ] });
+			my ($albums, $total) = @_;
+			$cb->({
+				items  => [ map { albumItem($_) } @$albums ],
+				offset => $offset,
+				(defined $total && $total > 0 ? (total => $total) : ()),
+			});
 		},
 		sub {
 			my ($code) = @_;
@@ -521,6 +535,7 @@ sub errItem {
 
 	my %token = (
 		1001     => 'PLUGIN_XIMALAYA_ERR_LOGIN',
+		303      => 'PLUGIN_XIMALAYA_ERR_LOGIN',   # m channel: needLogin (stale cookie)
 		927      => 'PLUGIN_XIMALAYA_ERR_NOPERM',
 		3005     => 'PLUGIN_XIMALAYA_ERR_NOPERM',
 		risk     => 'PLUGIN_XIMALAYA_ERR_RISK',

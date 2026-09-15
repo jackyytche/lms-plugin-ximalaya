@@ -38,6 +38,21 @@ use constant ALBUM_SIMPLE => BASE . '/revision/album/v1/simple';
 use constant SEARCH_MAIN => BASE . '/revision/search/main';
 use constant BASE_INFO   => BASE . '/mobile-playpage/track/v3/baseInfo';
 
+# ----------------------------------------------------- m (mobile web) channel
+# 0.1.27: the m.ximalaya.com revision API - a THIRD web surface with its own
+# risk-control domain. VERIFIED 2026-09-13 (m0/diag_msearch_probe3.py):
+# /m-revision/page/search answers ret=0 with REAL results when called with
+# the user 1&_token cookie AND a fresh xm-sign header ("webtk" is just the
+# du_web_sdk xm-sign - see HANDOFF §2.7). Anonymous -> ret 303 needLogin;
+# token without xm-sign -> ret=0 BUT isIllegal:true + empty views + advice
+# filler (SOFT failure - parsers must check isIllegal explicitly).
+use constant M_BASE   => 'https://m.ximalaya.com';
+use constant M_SEARCH => M_BASE . '/m-revision/page/search';
+use constant M_SEARCH_ROWS => 20;  # server page width (rows=5 still gave 20)
+
+# mobile UA for the m channel - the shape the successful probes used
+my $MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; M2102J2SC) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36';
+
 # ------------------------------------------------------------- pc channel
 # Desktop-client protocol (0.1.12). Blueprint verified 2026-09-10 with real
 # probes (m0/pc_*.json, trackquality_1012852891.json; 调研文档 §9 is the
@@ -937,44 +952,52 @@ sub _parse_rank_albums {
 
 # ------------------------------------------------------------------- search
 
-# $class->searchAlbums($kw, $cb, $ecb)
-#   cb->( [ { id, title, cover, announcer, tracksCount, paid }, ... ] )
+# $class->searchAlbums($kw, $page, $cb, $ecb)
+#   cb->( [ { id, title, cover, announcer, tracksCount, paid }, ... ], $total )
+#
+# 0.1.27: rewritten onto the m (mobile web) revision search. The old web
+# /revision/search/main is endpoint-dead (1005 family) and pc /search/main is
+# client-gated (both probe-verified, HANDOFF §2.2/§2.7). The m channel needs
+# the user 1&_token cookie AND a fresh xm-sign header per request - without
+# the header it soft-fails (ret=0, isIllegal, empty results), which the
+# parser reports as 'risk' so the menu cooldown kicks in.
 sub searchAlbums {
-	my ($class, $kw, $cb, $ecb) = @_;
+	my ($class, $kw, $page, $cb, $ecb) = @_;
+	$page = 1 unless $page && $page > 0;
+
+	# anonymous searches are refused server-side (ret=303 needLogin) - fail
+	# fast locally with the login error instead of burning a request
+	unless (_cookie() =~ /1&_token=/) {
+		$ecb->('1001');
+		return;
+	}
 
 	Plugins::Ximalaya::Sign->gen(
 		sub {
 			my ($sign) = @_;
 			$class->_json_get(
-				SEARCH_MAIN . '?kw=' . uri_escape_utf8($kw)
-				. '&core=album&spellchecker=true&device=iPhone&page=1&rows=30',
-				$class->_base_headers(
-					'Referer' => BASE . '/search',
-					'xm-sign' => $sign,
-				),
+				M_SEARCH . '?kw=' . uri_escape_utf8($kw)
+				. '&core=all&page=' . $page . '&rows=' . M_SEARCH_ROWS,
+				{
+					'Accept'          => 'application/json, text/plain, */*',
+					'Accept-Language' => 'zh-CN,zh;q=0.9,en;q=0.8',
+					'User-Agent'      => $MOBILE_UA,
+					'Referer'         => M_BASE . '/search',
+					'Cookie'          => _cookie(),
+					'xm-sign'         => $sign,
+				},
 				sub {
 					my ($data) = @_;
 					if (my $code = $class->_check_ret($data)) {
 						$ecb->($code);
 						return;
 					}
-					my $docs = eval { $data->{data}{albumsResult}{docs} } || [];
-					my $risk = eval { $data->{data}{riskLevel} } // 0;
-					if (!@$docs && $risk) {
-						$ecb->('risk');
+					my ($albums, $total, $err) = $class->_parse_search_albums($data);
+					unless (defined $albums) {
+						$ecb->($err);
 						return;
 					}
-					$cb->([ map {
-						my $d = $_;
-						{
-							id        => $d->{albumId},
-							title     => $d->{title} // '?',
-							cover     => $d->{cover} // '',
-							announcer => $d->{nickname} // $d->{announcer} // '',
-							tracksCount => $d->{tracksCount} // $d->{trackCount} // undef,
-							paid      => $d->{isPaid} // 0,
-						}
-					} @$docs ]);
+					$cb->($albums, $total);
 				},
 				$ecb,
 			);
@@ -986,6 +1009,44 @@ sub searchAlbums {
 	);
 
 	return;
+}
+
+# Pure parser: m-revision/page/search reply -> ([album hashes], $total, undef)
+# or (undef, undef, $err). VERIFIED probe3 gold (fixtures_pc.json searchOk):
+# albumViews.albums[] items carry albumInfo in the legacy docs shape -
+# id/title/cover_path(protocol-relative or http)/nickname(anchor)/tracks
+# (string count)/is_paid(STRING boolean "False"/"True")/play/intro - plus
+# pageUriInfo{categoryCode}. NOT the recommendItems shape (which has
+# statCountInfo/cover) - that is the advice-filler surface, not results.
+sub _parse_search_albums {
+	my ($class, $data) = @_;
+
+	# soft-failure guard: ret=0 + isIllegal/sq marker + empty views happens
+	# when xm-sign is stale/absent - treat as risk (menu cooldown), not empty
+	my $d = $data->{data} || {};
+	if (($d->{isIllegal} || 0) || (defined $d->{sq} && $d->{sq} ne '')) {
+		return (undef, undef, 'risk');
+	}
+
+	my $av     = $d->{albumViews} || {};
+	my $albums = $av->{albums} || [];
+	my $total  = $av->{total};
+
+	return ([], defined $total ? $total : undef, undef) unless @$albums;
+
+	my @out = map {
+		my $info = $_->{albumInfo} || {};
+		{
+			id          => $info->{id},
+			title       => $info->{title} // '?',
+			cover       => $class->_norm_cover($info->{cover_path} // ''),
+			announcer   => $info->{nickname} // '',
+			tracksCount => defined $info->{tracks} ? $info->{tracks} + 0 : undef,
+			paid        => (($info->{is_paid} // '') =~ /^(True|true|1)$/) ? 1 : 0,
+		}
+	} @$albums;
+
+	return (\@out, $total, undef);
 }
 
 # ------------------------------------------------------------------- resolve
