@@ -5,7 +5,7 @@
 		<title lang="ZH">喜马拉雅插件发布</title>
 	</details>
 	<plugins>
-		<plugin name="Ximalaya" version="0.1.39" minTarget="7.7" maxTarget="*">
+		<plugin name="Ximalaya" version="0.1.40" minTarget="7.7" maxTarget="*">
 			<title lang="EN">Ximalaya</title>
 			<title lang="ZH">喜马拉雅</title>
 			<desc lang="EN">Unofficial Ximalaya (ximalaya.com) music service. Personal use only; requires your own login cookie.</desc>
@@ -13,7 +13,7 @@
 			<creator>Ximalaya Plugin Project</creator>
 			<email>noreply@example.com</email>
 			<url>https://github.com/jackyytche/lms-plugin-ximalaya/releases/latest/download/Ximalaya.zip</url>
-			<sha>d62934550e391e89fe0cf2062bd396ad27683f49</sha>
+			<sha>1daba666a09cbcce3792f2bedc6e1cbcd64196d0</sha>
 			<icon>https://github.com/jackyytche/lms-plugin-ximalaya/releases/latest/download/ximalaya_logo.png</icon>
 			<category>musicservices</category>
 		</plugin>

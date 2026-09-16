@@ -552,18 +552,18 @@ close $fh;
 		push @calls, "mobile:$albumId:$page";
 		if ($albumId == 555 || $albumId == 777 || $albumId == 888 || $albumId == 999) { $ecb->('empty'); return; }
 		$cb->([
-			{ id => 759074956, title => 'm1', paid => 1, cover => '' },
-			{ id => 759074957, title => 'm2', paid => 0, cover => '' },
+			{ id => 759074956, title => 'm1', paid => 1, cover => 'https://img/m1', duration => 1065 },
+			{ id => 759074957, title => 'm2', paid => 0, cover => 'https://img/m2', duration => 977 },
 		], 1388);
 	};
 	local *Plugins::Ximalaya::API::albumTracksShow = sub {
 		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
 		push @calls, "pc:$albumId:$page";
 		if ($albumId == 555 || $albumId == 999) { $ecb->('empty'); return; }
-		if ($albumId == 777) { $cb->([ { id => 9, title => 'last', paid => 0, cover => '' } ], 0); return; }
+		if ($albumId == 777) { $cb->([ { id => 9, title => 'last', paid => 0, cover => '', duration => 840 } ], 0); return; }
 		$cb->([
-			{ id => 1, title => 't1', paid => 0, cover => '' },
-			{ id => 2, title => 't2', paid => 0, cover => '' },
+			{ id => 1, title => 't1', paid => 0, cover => '', duration => 600 },
+			{ id => 2, title => 't2', paid => 0, cover => '', duration => 700 },
 		], 1);
 	};
 	local *Plugins::Ximalaya::API::albumTracks = sub {
@@ -581,13 +581,17 @@ close $fh;
 	check('album: VIP album served by mobile list, one request',
 		"@calls" eq 'mobile:83701277:1' && $out->{offset} == 0
 		&& @{ $out->{items} || [] } == 2);
-	check('album: feed-level actions = header play/add/insert whole-album (Spotty-style base actions)',
+	check('album: feed-level actions = *all only, NO plain play/add (web row poison, 0.1.40)',
 		join('|', @{ $out->{actions}{playall}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
 		&& join('|', @{ $out->{actions}{addall}{command} || [] }) eq 'playlist|add|xmly://album/83701277'
-		&& join('|', @{ $out->{actions}{play}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
-		&& join('|', @{ $out->{actions}{add}{command} || [] }) eq 'playlist|add|xmly://album/83701277'
 		&& join('|', @{ $out->{actions}{insert}{command} || [] }) eq 'playlist|insert|xmly://album/83701277'
-		&& ref $out->{actions}{play}{fixedParams} eq 'HASH');
+		&& !exists $out->{actions}{play}
+		&& !exists $out->{actions}{add});
+	check('album: feed image = album artwork at the top of the WEB page (0.1.40)',
+		($out->{image} || '') ne '');
+	check('album: track items carry DEFINED duration (itemsHaveAudio trigger, 0.1.40)',
+		defined $out->{items}[0]{duration} && $out->{items}[0]{duration} == 1065
+		&& defined $out->{items}[1]{duration} && $out->{items}[1]{duration} == 977);
 	check('album: EXACT total=1388 from mobile totalCount, +1 for the trailing play-all row',
 		$out->{total} == 1389);
 	check('album: per-track isPaid restored ([VIP] prefix on mobile data)',

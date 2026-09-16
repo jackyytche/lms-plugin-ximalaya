@@ -489,6 +489,13 @@ sub albumHandler {
 			items  => \@items,
 			offset => $offset,
 			(defined $total ? (total => $total + ($args->{no_play_row} ? 0 : 1)) : ()),
+			# 0.1.40: feed-level image = the artwork at the top of the WEB
+			# page (Slim::Web::XMLBrowser L594 stash image -> template
+			# xmlbrowser.html L302). This is the "album cover at the top of
+			# the list page" the local album pages show.
+			($tracks->[0] && $tracks->[0]{cover}
+				? (image => $tracks->[0]{cover})
+				: ()),
 			# 0.1.35: feed-level actions become the level's BASE actions
 			# (Slim::Control::XMLBrowser menuMode: _makeAction($feedActions,
 			# 'play'|'add'|'insert')) - the UI renders them as the HEADER
@@ -618,6 +625,10 @@ sub trackItem {
 		type      => 'audio',
 		play      => "xmly://$t->{id}",
 		on_select => 'play',
+		# 0.1.40: a DEFINED duration flips Slim::Web::XMLBrowser's
+		# itemsHaveAudio (L764-771) - the web UI (Daphile's device screen)
+		# then renders the play-all/add-all controls on the album page.
+		(defined $t->{duration} ? (duration => $t->{duration}) : ()),
 		# 0.1.39: EXPLICIT single-track play/add/insert actions on the row.
 		# Without these, Daphile's row buttons fall back to the page-level
 		# base actions (0.1.35's whole-album commands) - so the row's play
@@ -652,25 +663,22 @@ sub trackItem {
 sub _album_play_actions {
 	my ($albumId) = @_;
 	return {
-		# 0.1.36: playall/addall are the action names Slim::Menu::BrowseLibrary
-		# uses for the local album pages (XMLBrowser prefers them over
-		# play/add whenever the player's playtrackalbum preference is on -
-		# which Daphile ships enabled). Keeping BOTH names means the header
-		# play button resolves identically whichever way the preference is
-		# set.
+		# 0.1.40: ONLY the *all actions remain at feed level. The plain
+		# play/add keys are GONE - on the web UI (which is what the device
+		# screen runs) Slim::Web::XMLBrowser::_makePlayLink resolves every
+		# ROW's play/add link feed-first (findAction), so the 0.1.35-0.1.39
+		# whole-album play/add commands were stamped onto EVERY track row:
+		# the row play button played the WHOLE album. With them removed the
+		# row links fall back to the item's own play URL (single track),
+		# while playall/addall stay for the page-level controls:
+		# action=playall at the lowest level executes the feed action
+		# DIRECTLY (XMLBrowser.pm L361-392) - whole album via
+		# explodePlaylist, immune to the 50-row page window.
 		playall => {
 			command     => [ 'playlist', 'play',   'xmly://album/' . $albumId ],
 			fixedParams => {},
 		},
 		addall => {
-			command     => [ 'playlist', 'add',    'xmly://album/' . $albumId ],
-			fixedParams => {},
-		},
-		play => {
-			command     => [ 'playlist', 'play',   'xmly://album/' . $albumId ],
-			fixedParams => {},
-		},
-		add => {
 			command     => [ 'playlist', 'add',    'xmly://album/' . $albumId ],
 			fixedParams => {},
 		},

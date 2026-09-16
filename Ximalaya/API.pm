@@ -389,6 +389,12 @@ sub albumTracks {
 							title => $t->{title} // $t->{trackName} // "?",
 							paid  => $t->{isPaid} // 0,
 							cover => $class->_norm_cover($t->{coverPath} || $t->{cover}),
+							# 0.1.40: DEFINED duration (seconds) is what flips
+							# Slim::Web::XMLBrowser's itemsHaveAudio (L766:
+							# "next unless defined duration || playall") - it
+							# makes the web UI render the play-all/add-all
+							# header controls on the album page.
+							duration => $t->{duration} // 0,
 						}
 					} @$list ], $d->{trackTotalCount});
 				},
@@ -624,6 +630,9 @@ sub _parse_show_tracks {
 			title => $t->{trackName} // "?",
 			paid  => $t->{isPaid} // 0,      # absent in real replies -> 0
 			cover => $class->_norm_cover($t->{trackCoverPath} // ''),
+			# 0.1.40: see the mobile normalizer - defined duration powers the
+			# web play-all/add-all header (itemsHaveAudio).
+			duration => $t->{duration} // 0,
 		}
 	} @$list;
 
