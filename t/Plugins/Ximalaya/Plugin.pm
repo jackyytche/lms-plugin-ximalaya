@@ -193,6 +193,7 @@ sub _cm_items {
 						cmBrowseAlbum  => $browse,
 						cmBrowseTitle  => ( $args->{title}  // '' ),
 						cmBrowseAuthor => ( $args->{author} // '' ),
+						cmBrowseIcon   => ( $args->{icon}   // '' ),
 					},
 				},
 				},
@@ -241,7 +242,8 @@ sub handleFeed {
 	if (my $cmBrowse = $params->{cmBrowseAlbum}) {
 		albumHandler($client, $cb, $params, $cmBrowse,
 			( $params->{cmBrowseTitle}  // '' ),
-			( $params->{cmBrowseAuthor} // '' ));
+			( $params->{cmBrowseAuthor} // '' ),
+			( $params->{cmBrowseIcon}   // '' ));
 		return;
 	}
 
@@ -401,10 +403,15 @@ sub albumItem {
 		# (Slim::Web::XMLBrowser L517), and albumHandler folds them into the
 		# songinfo header (albumData labels), giving the album page the
 		# local-library layout: big artwork LEFT, buttons RIGHT.
+		# 0.1.42: plus the ALBUM cover - the track list API's per-track
+		# covers come in mixed size tiers (some _T87x87), while the album
+		# list cover (what my-albums rows show, the "originally crisp" one)
+		# is the better source for the page header.
 		passthrough => [
 			$album->{id},
 			($album->{title}     // ''),
 			($album->{announcer} // ''),
+			($album->{cover}     // ''),
 		],
 		play            => 'xmly://album/' . $album->{id},
 		on_select       => 'play',
@@ -470,7 +477,7 @@ sub albumHandler {
 	# albumInfo detour is gone - album/simple carries no track count at
 	# all (probe-verified 2026-09-10). Cooldown families: 'tracks_mobile'
 	# (mobile list), 'tracks' (pc show), 'tracks_web' (web list).
-	my ($client, $cb, $args, $albumId, $albumTitle, $albumAuthor) = @_;
+	my ($client, $cb, $args, $albumId, $albumTitle, $albumAuthor, $albumCover) = @_;
 	$albumId ||= '';
 
 	my $quantity = $args->{quantity} || 50;
@@ -486,6 +493,9 @@ sub albumHandler {
 			. (defined $total ? " of $total" : ''));
 		my $n = 0;
 		my @items = map { trackItem(++$n + $offset, $_) } @$tracks;
+		# 0.1.42: header artwork source - album cover first, track cover as
+		# the fallback (both upscaled by _cover_large below).
+		my $headerCover = $albumCover || ($tracks->[0] && $tracks->[0]{cover});
 
 		# 0.1.34: trailing "play whole album" row at combined position
 		# $total (the first window that reaches past the last track renders
@@ -514,8 +524,14 @@ sub albumHandler {
 			# page (Slim::Web::XMLBrowser L594 stash image -> template
 			# xmlbrowser.html L302). This is the "album cover at the top of
 			# the list page" the local album pages show.
-			($tracks->[0] && $tracks->[0]{cover}
-				? (image => $tracks->[0]{cover})
+			# 0.1.42: source priority = the ALBUM cover passed through from
+			# the album row (the consistently-sized source the my-albums
+			# rows show), falling back to the first track's cover; both are
+			# upscaled via _cover_large, because the track list API hands
+			# out mixed size tiers (_T87x87/_T250x250) and the header
+			# renders whatever it gets.
+			($headerCover
+				? (image => Plugins::Ximalaya::API->_cover_large($headerCover))
 				: ()),
 			# 0.1.41: SONGINFO HEADER - the local-album-page layout (big art
 			# LEFT, buttons RIGHT). Trigger pieces, per Slim::Web::XMLBrowser:

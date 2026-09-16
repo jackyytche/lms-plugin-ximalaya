@@ -194,6 +194,22 @@ sub _norm_cover {
 	return $c;
 }
 
+# 0.1.42: upscale a CDN cover to its ORIGINAL variant. The list APIs return
+# different size tiers per album as a trailing _T<W>x<H> segment right before
+# the extension (probe: _T250x250.jpg and _T87x87.jpg both occur) - the web
+# skin's songinfo header shows the raw image, so a small tier renders as a
+# small header. Stripping the segment yields the original upload, the same
+# URL shape ximalaya.com's own web album pages use. Applies only when the
+# suffix sits immediately before the extension.
+sub _cover_large {
+	my ($class, $c) = @_;
+	$c = $class->_norm_cover($c);
+	return $c unless $c;
+	$c =~ s{_T\d+x\d+(?=\.\w+$)}{};
+	$c =~ s{!\d+x\d+(?=\.\w+$)}{};    # legacy www form xxx!250x250.jpg
+	return $c;
+}
+
 # ------------------------------------------------------------------ pc helpers
 
 # self-made device id for the pc channel (调研文档 §9.3): a UUID4-style id
