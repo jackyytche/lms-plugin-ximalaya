@@ -188,7 +188,12 @@ sub _cm_items {
 				go => {
 					player => 0,
 					cmd    => [ 'ximalaya', 'items' ],
-					params => { menu => 'ximalaya', cmBrowseAlbum => $browse },
+					params => {
+						menu           => 'ximalaya',
+						cmBrowseAlbum  => $browse,
+						cmBrowseTitle  => ( $args->{title}  // '' ),
+						cmBrowseAuthor => ( $args->{author} // '' ),
+					},
 				},
 				},
 			},
@@ -219,6 +224,7 @@ sub _cm_feed_items {
 			icon   => $params->{cmIcon},
 			favUrl => _albumFeedUrl($cmAlbum),
 			browse => $cmAlbum,
+			author => ( $params->{cmAuthor} // '' ),
 		});
 	}
 
@@ -229,10 +235,13 @@ sub _cm_feed_items {
 sub handleFeed {
 	my ($client, $cb, $params, $args) = @_;
 
-	# 0.1.39: "Browse tracks" tile in the album context menu - descends into
-	# the album's track list (same handler the album rows use).
+	# 0.1.39/0.1.41: "Browse tracks" tile in the album context menu - descends
+	# into the album's track list carrying title/author for the songinfo
+	# header.
 	if (my $cmBrowse = $params->{cmBrowseAlbum}) {
-		albumHandler($client, $cb, $params, $cmBrowse);
+		albumHandler($client, $cb, $params, $cmBrowse,
+			( $params->{cmBrowseTitle}  // '' ),
+			( $params->{cmBrowseAuthor} // '' ));
 		return;
 	}
 
@@ -387,7 +396,16 @@ sub albumItem {
 		image       => $album->{cover},
 		type        => 'link',
 		url         => \&albumHandler,
-		passthrough => [ $album->{id} ],
+		# 0.1.41: passthrough now carries TITLE and ANNOUNCER past the id -
+		# the web UI invokes coderefs as handler($client,$cb,\%args,@pt)
+		# (Slim::Web::XMLBrowser L517), and albumHandler folds them into the
+		# songinfo header (albumData labels), giving the album page the
+		# local-library layout: big artwork LEFT, buttons RIGHT.
+		passthrough => [
+			$album->{id},
+			($album->{title}     // ''),
+			($album->{announcer} // ''),
+		],
 		play            => 'xmly://album/' . $album->{id},
 		on_select       => 'play',
 		favorites_url   => _albumFeedUrl($album->{id}),
@@ -407,10 +425,11 @@ sub albumItem {
 			info => {
 				command     => [ 'ximalaya', 'items' ],
 				fixedParams => {
-					menu    => 1,
-					cmAlbum => $album->{id},
-					cmTitle => $name,
-					cmIcon  => $album->{cover} || '',
+					menu     => 1,
+					cmAlbum  => $album->{id},
+					cmTitle  => $name,
+					cmIcon   => $album->{cover} || '',
+					cmAuthor => ( $album->{announcer} // '' ),
 				},
 			},
 		},
@@ -432,6 +451,8 @@ sub _albumFallbackItem {
 
 sub albumHandler {
 	# XMLBrowser calls coderef feeds as: handler($client, $cb, \%args, @passthrough).
+	# 0.1.41: @passthrough is (id, title, announcer) - albumItem widens it so
+	# the WEB songinfo header can label the album (the local-library layout).
 	# 0.1.10: NATIVE WINDOWING - the web/player UI passes $args->{index}
 	# (first wanted item) and $args->{quantity} (= server pref itemsPerPage,
 	# 50 on Daphile). We fetch exactly that page from the API and report
@@ -449,7 +470,7 @@ sub albumHandler {
 	# albumInfo detour is gone - album/simple carries no track count at
 	# all (probe-verified 2026-09-10). Cooldown families: 'tracks_mobile'
 	# (mobile list), 'tracks' (pc show), 'tracks_web' (web list).
-	my ($client, $cb, $args, $albumId) = @_;
+	my ($client, $cb, $args, $albumId, $albumTitle, $albumAuthor) = @_;
 	$albumId ||= '';
 
 	my $quantity = $args->{quantity} || 50;
@@ -496,6 +517,16 @@ sub albumHandler {
 			($tracks->[0] && $tracks->[0]{cover}
 				? (image => $tracks->[0]{cover})
 				: ()),
+			# 0.1.41: SONGINFO HEADER - the local-album-page layout (big art
+			# LEFT, buttons RIGHT). Trigger pieces, per Slim::Web::XMLBrowser:
+			#   play      -> stash playUrl (L564) -> details playLink/addLink
+			#                (L976-985) = playlist play/add xmly://album/N,
+			#                i.e. the WHOLE album via explodePlaylist;
+			#   albumData -> L861 folds labelled rows into the header details
+			#                WITHOUT touching the track list (ALBUM = title,
+			#                ARTIST = announcer);
+			#   with songinfo set the template's ALL_SONGS row is suppressed
+			#   (xmlbrowser.html L314) - no more button-row below the art.
 			# 0.1.35: feed-level actions become the level's BASE actions
 			# (Slim::Control::XMLBrowser menuMode: _makeAction($feedActions,
 			# 'play'|'add'|'insert')) - the UI renders them as the HEADER
@@ -504,6 +535,20 @@ sub albumHandler {
 			# ProtocolHandler::explodePlaylist (same URL as the album row).
 			($albumId =~ /^\d+$/
 				? (actions => _album_play_actions($albumId))
+				: ()),
+			# 0.1.41: the songinfo trigger pair - see the block above.
+			(( $albumId =~ /^\d+$/ )
+				? ( play => 'xmly://album/' . $albumId )
+				: ()),
+			(( $albumId =~ /^\d+$/ && ( $albumTitle || $albumAuthor ) )
+				? ( albumData => [
+						( $albumTitle
+							? ( { name => $albumTitle, type => 'text', label => 'ALBUM' } )
+							: () ),
+						( $albumAuthor
+							? ( { name => $albumAuthor, type => 'text', label => 'ARTIST' } )
+							: () ),
+					] )
 				: ()),
 		});
 	};

@@ -592,6 +592,19 @@ close $fh;
 	check('album: track items carry DEFINED duration (itemsHaveAudio trigger, 0.1.40)',
 		defined $out->{items}[0]{duration} && $out->{items}[0]{duration} == 1065
 		&& defined $out->{items}[1]{duration} && $out->{items}[1]{duration} == 977);
+	check('album: feed play = songinfo playUrl trigger (0.1.41)',
+		($out->{play} || '') eq 'xmly://album/83701277');
+
+	# 0.1.41: widened passthrough (id, title, announcer) -> songinfo header
+	# labels via feed-level albumData (web calls coderefs with @pt spread).
+	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 83701277, '大明王朝', '王更新');
+	check('album: albumData labels ALBUM/ARTIST feed the songinfo header (0.1.41)',
+		ref $out->{albumData} eq 'ARRAY'
+		&& @{ $out->{albumData} } == 2
+		&& ($out->{albumData}[0]{label} || '') eq 'ALBUM' && ($out->{albumData}[0]{name} || '') eq '大明王朝'
+		&& ($out->{albumData}[1]{label} || '') eq 'ARTIST' && ($out->{albumData}[1]{name} || '') eq '王更新'
+		&& ($out->{albumData}[0]{type} || '') eq 'text');
 	check('album: EXACT total=1388 from mobile totalCount, +1 for the trailing play-all row',
 		$out->{total} == 1389);
 	check('album: per-track isPaid restored ([VIP] prefix on mobile data)',
