@@ -428,15 +428,17 @@ sub _xml_escape {
 # feed page must never carry MORE items than the UI page width, or the
 # overflow becomes a phantom page holding only the next-page row (the
 # 0.1.29 bug: 50 tracks + 1 next-page row = 51 items vs 50 per page ->
-# "page 2 shows nothing but next page"). Width = itemsPerPage - 1 (room
-# for the next-page row), capped at PC_SHOW_MAX (the API page width).
-# itemsPerPage is the same server preference the UI uses (pageInfo falls
-# back to preferences('server')->get('itemsPerPage'); Daphile default 50).
+# "page 2 shows nothing but next page"). Width = itemsPerPage - 2 (room
+# for the next-page row AND the 0.1.32 jump-to-page row), capped at
+# PC_SHOW_MAX (the API page width). itemsPerPage is the same server
+# preference the UI uses (pageInfo falls back to
+# preferences('server')->get('itemsPerPage'); Daphile default 50).
 sub _feed_page_width {
 	my $pp = eval { preferences('server')->get('itemsPerPage') };
-	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 2;    # garbage/small -> Daphile default
+	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 3;    # garbage/tiny -> Daphile default
 	$pp = 500 if $pp > 500;                               # paranoia clamp
-	my $w = $pp - 1;
+	my $w = $pp - 2;
+	$w = 1             if $w < 1;
 	$w = PC_SHOW_MAX() if $w > PC_SHOW_MAX();
 	return $w;
 }
@@ -452,6 +454,14 @@ sub _feed_page_width {
 # fetched page fits on ONE UI page (no phantom pager page), and outlines
 # carry image="..." covers (Slim::Formats::XML copies unknown outline
 # attributes verbatim into the item hash; Daphile renders item images).
+# 0.1.32: jump-to-page layer. The native pager cannot work across feed
+# windows (a fetched feed is cached and sliced, never re-fetched), and
+# db:-style coderef rewriting is hardcoded to local-library URLs - so
+# direct page selection is built INTO the feed: each track page carries a
+# "jump to page" row whose URL embeds the server total; that layer
+# (mode=pages) lists every page as a link row generated LOCALLY with zero
+# API calls. The page list itself is one fetch -> the UI's native pager
+# works on it for free even for huge albums.
 sub albumFeedHandler {
 	my ($client, $params, $callback, $httpClient, $response) = @_;
 
@@ -498,22 +508,56 @@ sub albumFeedHandler {
 		return;
 	}
 
+	# 0.1.32: page list layer - mode=pages&total=N. Pure local generation
+	# from the total that the track page embedded in the link; one row per
+	# page, each leading back to the track feed at that page.
+	if (($params->{mode} || '') eq 'pages') {
+		my $total = ($params->{total} || '') =~ /^(\d{1,7})$/ ? $1 : 0;
+		my @items;
+		if ($total) {
+			my $pages = int(($total + $width - 1) / $width);
+			for my $p (1 .. $pages) {
+				my $from = ($p - 1) * $width + 1;
+				my $to   = $from + $width - 1;
+				$to = $total if $to > $total;
+				push @items, {
+					name => cstring($client, 'PLUGIN_XIMALAYA_PAGE_OF', $p, $from, $to),
+					type => 'link',
+					url  => _albumFeedUrl($albumId) . '&page=' . $p,
+				};
+			}
+		}
+		$finish->(\@items);
+		return;
+	}
+
 	Plugins::Ximalaya::Plugin::albumHandler($client,
 		sub {
 			my ($feed) = @_;
 			my $items = $feed->{items} || [];
 
-			# next page: only when the windowing reports more to come. The
-			# row reuses the first cover of this batch so the link does not
-			# render bare in cover-aware skins.
+			# navigation rows. The next-page row and the jump-to-page row
+			# both reuse the first cover of this batch so they do not render
+			# bare in cover-aware skins. The jump row embeds the server
+			# total into its URL (mode=pages layer above) so flipping to it
+			# costs zero API calls.
 			my $total = $feed->{total};
 			my $have  = ($feed->{offset} || 0) + scalar @$items;
+			my ($cover) = map { $_->{image} || () } @$items;
 			if (defined $total && $have < $total && scalar @$items) {
-				my ($cover) = map { $_->{image} || () } @$items;
 				push @$items, {
 					name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
 					type  => 'link',
 					url   => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
+					image => $cover,
+				};
+			}
+			if (defined $total && $total > $width) {
+				my $pages = int(($total + $width - 1) / $width);
+				push @$items, {
+					name  => cstring($client, 'PLUGIN_XIMALAYA_JUMP_PAGES', $pages),
+					type  => 'link',
+					url   => _albumFeedUrl($albumId) . '&mode=pages&total=' . $total,
 					image => $cover,
 				};
 			}

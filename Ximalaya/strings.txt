@@ -83,6 +83,14 @@ PLUGIN_XIMALAYA_NEXT_PAGE
 	EN	Next page...
 	ZH_CN	下一页...
 
+PLUGIN_XIMALAYA_JUMP_PAGES
+	EN	Jump to page... (%s pages)
+	ZH_CN	跳转到第…页（共%s页）
+
+PLUGIN_XIMALAYA_PAGE_OF
+	EN	Page %s (tracks %s-%s)
+	ZH_CN	第%s页（第%s-%s集）
+
 PLUGIN_XIMALAYA_PREV_PAGE
 	EN	Previous page...
 	ZH_CN	上一页...

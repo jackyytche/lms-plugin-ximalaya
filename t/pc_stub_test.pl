@@ -1018,14 +1018,16 @@ close $fh;
 			undef, $resp);
 		check('feed: last page has no next-page link',
 			$body =~ /xmly:\/\/759074957/ && $body !~ /&amp;page=3/);
+		check('feed: single-page album gets no jump-to-page row (total <= width)',
+			$body !~ /mode=pages/);
 	}
 
-	# 0.1.31 ghost-page fix. The web UI slices a fetched feed per page
-	# (Slim::Web::XMLBrowser caches the whole feed; Pages::Common::pageInfo
-	# slices; no re-fetch), so a feed page must never exceed the UI page
-	# width: width = itemsPerPage - 1 -> 49 tracks + 1 next-page row = 50
-	# outlines = exactly ONE ui page (was 50+1=51 -> phantom "page 2" holding
-	# only the next-page row).
+	# 0.1.31 ghost-page fix + 0.1.32 jump-to-page row. The web UI slices a
+	# fetched feed per page (Slim::Web::XMLBrowser caches the whole feed;
+	# Pages::Common::pageInfo slices; no re-fetch), so a feed page must never
+	# exceed the UI page width: width = itemsPerPage - 2 -> 48 tracks +
+	# next-page row + jump-to-page row = 50 outlines = exactly ONE ui page
+	# (was 50+1=51 -> phantom "page 2" holding only the next-page row).
 	{
 		my (@sizes, @pages);
 		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
@@ -1040,41 +1042,84 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 1 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		my $rows = () = $body =~ /<outline /g;
-		check('feed: width=49 -> 49 tracks + next = 50 rows = one UI page (no phantom page)',
-			$rows == 50 && $sizes[0] == 49 && $pages[0] == 1);
-		check('feed: page-1 numbering 1..49, audio rows carry image cover attr',
-			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="49. t49"\E/
-			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/49"\E});
+		check('feed: width=48 -> 48 tracks + next + jump = 50 rows = one UI page (no phantom page)',
+			$rows == 50 && $sizes[0] == 48 && $pages[0] == 1);
+		check('feed: page-1 numbering 1..48, audio rows carry image cover attr',
+			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="48. t48"\E/
+			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/48"\E});
 		check('feed: next-page row carries first-batch cover + page=2 url',
 			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_NEXT_PAGE" URL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777&amp;page=2" type="link" image="https://img/1"/>\E});
+		check('feed: jump-to-page row embeds total for the zero-API page list',
+			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_JUMP_PAGES" URL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777&amp;mode=pages&amp;total=100" type="link" image="https://img/1"/>\E});
 
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 2 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		$rows = () = $body =~ /<outline /g;
-		check('feed: page=2 keeps offset math (titles numbered 50..98) and still one page',
-			$rows == 50 && $pages[1] == 2 && $sizes[1] == 49
-			&& $body =~ /\Qtext="50. t1"\E/ && $body =~ /\Qtext="98. t49"\E/
+		check('feed: page=2 keeps offset math (titles numbered 49..96) and still one page',
+			$rows == 50 && $pages[1] == 2 && $sizes[1] == 48
+			&& $body =~ /\Qtext="49. t1"\E/ && $body =~ /\Qtext="96. t48"\E/
 			&& $body =~ /&amp;page=3/);
 	}
 
+	# 0.1.32: jump-to-page list layer - zero API calls, locally generated
+	# from the embedded total; ceil edge cases; garbage total degrades to an
+	# empty list. The whole list is one fetch -> the UI's own pager handles
+	# it natively (bonus).
+	{
+		# any API call here would mean the page list is NOT zero-API: die loudly
+		local *Plugins::Ximalaya::API::albumTracksMobile = sub { die "API called from pages layer" };
+		my $body;
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
+			{ album => '777', mode => 'pages', total => '100' },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		my $rows = () = $body =~ /<outline /g;
+		check('feed: pages layer for total=100 -> 3 page rows, zero API calls',
+			$rows == 3
+			&& $body =~ m{\Qalbumfeed.html?album=777&amp;page=1\E}
+			&& $body =~ m{\Qalbumfeed.html?album=777&amp;page=2\E}
+			&& $body =~ m{\Qalbumfeed.html?album=777&amp;page=3\E}
+			&& $body !~ /type="audio"/);
+		check('feed: pages layer names carry token (format applied in prod strings)',
+			($body =~ m{text="(PLUGIN_XIMALAYA_PAGE_OF)"} ? $1 : '') eq 'PLUGIN_XIMALAYA_PAGE_OF');
+
+		# ceil edge: exactly 2 full pages vs one track over
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
+			{ album => '777', mode => 'pages', total => '96' },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		my $rows96 = () = $body =~ /<outline /g;
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
+			{ album => '777', mode => 'pages', total => '97' },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		my $rows97 = () = $body =~ /<outline /g;
+		check('feed: pages layer ceil edges (96 -> 2 pages, 97 -> 3 pages)',
+			$rows96 == 2 && $rows97 == 3);
+
+		# missing/garbage total -> bare OPML, no rows
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
+			{ album => '777', mode => 'pages' },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		check('feed: pages layer without total -> empty OPML (no rows, no crash)',
+			$body !~ /<outline/);
+	}
+
 	# width helper: follows itemsPerPage, clamped to the API cap, garbage-
-	# proof (0.1.31)
+	# proof (0.1.31; 0.1.32 keeps TWO rows worth of room)
 	{
 		my $srv = preferences('server');
 		$srv->set('itemsPerPage', 25);
-		check('feed: width follows itemsPerPage=25 -> 24',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 24);
+		check('feed: width follows itemsPerPage=25 -> 23',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 23);
 		$srv->set('itemsPerPage', 200);
 		check('feed: width capped at PC_SHOW_MAX for huge itemsPerPage',
 			Plugins::Ximalaya::Plugin::_feed_page_width() == Plugins::Ximalaya::API::PC_SHOW_MAX());
 		$srv->set('itemsPerPage', 1);
-		check('feed: pathological itemsPerPage=1 falls back to default 50 -> 49',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 49);
+		check('feed: pathological itemsPerPage=1 falls back to default 50 -> 48',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 48);
 		$srv->set('itemsPerPage', 'abc');
-		check('feed: non-numeric itemsPerPage falls back to default 50 -> 49',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 49);
+		check('feed: non-numeric itemsPerPage falls back to default 50 -> 48',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 48);
 
-		# end-to-end at itemsPerPage=25: 24 tracks + next = 25 rows
+		# end-to-end at itemsPerPage=25: 23 tracks + next + jump = 25 rows
 		$srv->set('itemsPerPage', 25);
 		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
 			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
@@ -1086,8 +1131,9 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '888', page => 1 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		my $rows = () = $body =~ /<outline /g;
-		check('feed: itemsPerPage=25 -> 24 tracks + next = 25 rows',
-			$rows == 25 && $body =~ /\Qtext="24. u24"\E/);
+		check('feed: itemsPerPage=25 -> 23 tracks + next + jump = 25 rows',
+			$rows == 25 && $body =~ /\Qtext="23. u23"\E/
+			&& $body =~ /&amp;mode=pages&amp;total=100/);
 
 		$srv->set('itemsPerPage', 50);
 	}
