@@ -780,6 +780,148 @@ sub _parse_mobile_tracks {
 	return (\@out, $total, undef);
 }
 
+# ------------------------------------------------ full album list (m3u, 0.1.33)
+# 0.1.33: the WHOLE album track list behind the play-whole-album playlist
+# (album-<id>.m3u, Plugin.pm). Chained async pagination over the three list
+# tiers - mobile (pageId/pageSize, exact totalCount) -> pc show (hasMore)
+# -> web getTracksList - stopping at the first tier that yields a complete
+# list. The observed page width governs the short-page stop so a server-
+# side pageSize clamp cannot truncate the list. Aggregated in-memory for
+# 1h (server RAM only, same policy as the resolve cache): the list only
+# changes when the publisher adds episodes, and repeat plays of the
+# playlist cost ZERO API calls.
+my %ALLTRACKS_CACHE;    # albumId => { expires => epoch, list => [ {id,title,paid} ] }
+
+use constant ALLTRACKS_TTL      => 3600;
+use constant ALLTRACKS_MAX_CALL => 100;    # hard safety cap on tier requests
+
+# test hook: wipe the cache between stub scenarios
+sub _clear_alltracks_cache {
+	%ALLTRACKS_CACHE = ();
+	return;
+}
+
+# $class->albumTracksAll($albumId, $cb, $ecb)
+#   cb->( [ {id,title,paid}, ... ] ) in album order
+#   ecb->('empty') - no tier produced any tracks
+sub albumTracksAll {
+	my ($class, $albumId, $cb, $ecb) = @_;
+
+	if (my $c = $ALLTRACKS_CACHE{$albumId}) {
+		if ($c->{expires} > Time::HiRes::time()) {
+			$cb->($c->{list});
+			return;
+		}
+		delete $ALLTRACKS_CACHE{$albumId};
+	}
+
+	my @acc;
+	my $done = sub {
+		my ($list) = @_;
+		unless (@$list) {
+			$ecb->('empty');
+			return;
+		}
+		%ALLTRACKS_CACHE = () if keys %ALLTRACKS_CACHE > 50;
+		$ALLTRACKS_CACHE{$albumId} = {
+			expires => Time::HiRes::time() + ALLTRACKS_TTL,
+			list    => $list,
+		};
+		$cb->($list);
+	};
+
+	# tier states live in the tier closure (observed page width + server
+	# total must persist ACROSS pages); the observed width governs the
+	# short-page stop so a server-side pageSize clamp cannot truncate the
+	# list silently.
+	my ($mobile_page, $pc_page, $web_page);
+
+	$mobile_page = sub {
+		my ($obs, $total, $fetch) = (undef, undef, undef);
+		$fetch = sub {
+			my ($page) = @_;
+			$class->albumTracksMobile($albumId, $page, 150,
+				sub {
+					my ($tracks, $t) = @_;
+					push @acc, @$tracks;
+					$obs   = scalar @$tracks if !defined $obs && @$tracks;
+					$total = $t if defined $t && !defined $total;
+					my $have = scalar @acc;
+					my $stop = !@$tracks
+						|| (defined $total && $have >= $total)
+						|| (defined $obs && @$tracks < $obs)
+						|| $have >= ALLTRACKS_MAX_CALL * ($obs || 150);
+					if ($stop) {
+						# empty first page = album not on the mobile index
+						# (free album) -> try the pc tier with a clean slate
+						@acc ? $done->(\@acc) : $pc_page->();
+						return;
+					}
+					$fetch->($page + 1);
+				},
+				sub {
+					# mid-chain failure: restart cleanly on the pc tier
+					@acc = ();
+					$pc_page->();
+				},
+			);
+		};
+		$fetch->(1);
+	};
+
+	$pc_page = sub {
+		my $fetch;
+		$fetch = sub {
+			my ($page) = @_;
+			$class->albumTracksShow($albumId, $page, 50,
+				sub {
+					my ($tracks, $has_more) = @_;
+					push @acc, @$tracks;
+					if (!@$tracks || !$has_more || scalar(@acc) >= ALLTRACKS_MAX_CALL * 50) {
+						@acc ? $done->(\@acc) : $web_page->();
+						return;
+					}
+					$fetch->($page + 1);
+				},
+				sub {
+					@acc = ();
+					$web_page->();
+				},
+			);
+		};
+		$fetch->(1);
+	};
+
+	$web_page = sub {
+		my ($obs, $total, $fetch) = (undef, undef, undef);
+		$fetch = sub {
+			my ($page) = @_;
+			$class->albumTracks($albumId, $page, 100,
+				sub {
+					my ($tracks, $t) = @_;
+					push @acc, @$tracks;
+					$obs   = scalar @$tracks if !defined $obs && @$tracks;
+					$total = $t if defined $t && !defined $total;
+					my $have = scalar @acc;
+					my $stop = !@$tracks
+						|| (defined $total && $have >= $total)
+						|| (defined $obs && @$tracks < $obs)
+						|| $have >= ALLTRACKS_MAX_CALL * ($obs || 100);
+					# no tier left - report what we have (or empty)
+					$done->(\@acc) if $stop;
+					return if $stop;
+					$fetch->($page + 1);
+				},
+				sub { $done->(\@acc) },
+			);
+		};
+		$fetch->(1);
+	};
+
+	$mobile_page->();
+	return;
+}
+
 # 0.1.30: codec hint from the actual stream-path suffix. The tier labels
 # lie for the ORIGIN tier - it streams the ORIGINAL upload (0.1.18), and a
 # .flac upload plays at 1000+ kbps but was labelled 'm4a' -> the UI showed

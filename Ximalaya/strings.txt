@@ -83,6 +83,10 @@ PLUGIN_XIMALAYA_NEXT_PAGE
 	EN	Next page...
 	ZH_CN	下一页...
 
+PLUGIN_XIMALAYA_PLAY_ALL
+	EN	Play whole album
+	ZH_CN	播放整张专辑
+
 PLUGIN_XIMALAYA_JUMP_PAGES
 	EN	Jump to page... (%s pages)
 	ZH_CN	跳转到第…页（共%s页）

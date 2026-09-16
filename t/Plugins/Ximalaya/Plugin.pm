@@ -92,6 +92,16 @@ sub initPlugin {
 		\&albumFeedHandler,
 	);
 
+	# 0.1.33: whole-album playlist route. Played as a URL (one click on the
+	# feed's play-whole-album row) LMS expands the m3u into the full ordered
+	# xmly:// track list - the remote equivalent of the local
+	# "playlist play db:album.id=N" whole-album enqueue. The .m3u extension
+	# keeps LMS's URL type detection on the playlist path.
+	Slim::Web::Pages->addPageFunction(
+		qr{^plugins/Ximalaya/album-\d+\.m3u$},
+		\&albumM3uHandler,
+	);
+
 	$class->SUPER::initPlugin(
 		feed => \&handleFeed,
 		tag  => 'ximalaya',
@@ -205,6 +215,56 @@ sub _albumFeedUrl {
 	$base = 'http://127.0.0.1:9000' unless $base;    # never expected; keep the entry non-fatal
 	$base =~ s{/+$}{};
 	return $base . '/plugins/Ximalaya/albumfeed.html?album=' . $albumId;
+}
+
+# 0.1.33: absolute whole-album playlist URL (same absolute rationale as the
+# feed URL above). LMS expands it into the ordered xmly:// track list.
+sub _album_m3u_url {
+	my ($albumId) = @_;
+	my $base = eval { require Slim::Utils::Network; Slim::Utils::Network::serverURL() };
+	$base = 'http://127.0.0.1:9000' unless $base;
+	$base =~ s{/+$}{};
+	return $base . '/plugins/Ximalaya/album-' . $albumId . '.m3u';
+}
+
+# 0.1.33: the whole-album playlist. albumTracksAll chains the three list
+# tiers (1h in-memory cache), we emit a plain M3U of xmly:// track URLs;
+# LMS enqueues them all on play and resolves each lazily at its turn, so
+# one click queues the entire album for sequential playback.
+sub albumM3uHandler {
+	my ($client, $params, $callback, $httpClient, $response) = @_;
+
+	my ($albumId) = ($params->{path} || '') =~ /album-(\d+)\.m3u$/;
+	$albumId ||= '';
+
+	my $emit = sub {
+		my ($body) = @_;
+		$response->content_type('audio/x-mpegurl');
+		$callback->($client, $params, \$body, $httpClient, $response);
+		return;
+	};
+
+	unless ($albumId) {
+		$emit->("#EXTM3U\n");
+		return;
+	}
+
+	Plugins::Ximalaya::API->albumTracksAll($albumId,
+		sub {
+			my ($tracks) = @_;
+			my @lines = ('#EXTM3U');
+			for my $t (@$tracks) {
+				next unless defined $t->{id} && length $t->{id};
+				my $title = $t->{title} // '';
+				$title =~ s/[\r\n]+/ /g;
+				push @lines, '#EXTINF:-1,' . $title, 'xmly://' . $t->{id};
+			}
+			$emit->(join("\n", @lines) . "\n");
+		},
+		sub { $emit->("#EXTM3U\n") },
+	);
+
+	return;
 }
 
 sub albumItem {
@@ -428,16 +488,16 @@ sub _xml_escape {
 # feed page must never carry MORE items than the UI page width, or the
 # overflow becomes a phantom page holding only the next-page row (the
 # 0.1.29 bug: 50 tracks + 1 next-page row = 51 items vs 50 per page ->
-# "page 2 shows nothing but next page"). Width = itemsPerPage - 2 (room
-# for the next-page row AND the 0.1.32 jump-to-page row), capped at
-# PC_SHOW_MAX (the API page width). itemsPerPage is the same server
-# preference the UI uses (pageInfo falls back to
-# preferences('server')->get('itemsPerPage'); Daphile default 50).
+# "page 2 shows nothing but next page"). Width = itemsPerPage - 3 (room
+# for the 0.1.33 play-whole-album row, the next-page row AND the 0.1.32
+# jump-to-page row), capped at PC_SHOW_MAX (the API page width).
+# itemsPerPage is the same server preference the UI uses (pageInfo falls
+# back to preferences('server')->get('itemsPerPage'); Daphile default 50).
 sub _feed_page_width {
 	my $pp = eval { preferences('server')->get('itemsPerPage') };
-	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 3;    # garbage/tiny -> Daphile default
+	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 4;    # garbage/tiny -> Daphile default
 	$pp = 500 if $pp > 500;                               # paranoia clamp
-	my $w = $pp - 2;
+	my $w = $pp - 3;
 	$w = 1             if $w < 1;
 	$w = PC_SHOW_MAX() if $w > PC_SHOW_MAX();
 	return $w;
@@ -536,14 +596,26 @@ sub albumFeedHandler {
 			my ($feed) = @_;
 			my $items = $feed->{items} || [];
 
-			# navigation rows. The next-page row and the jump-to-page row
-			# both reuse the first cover of this batch so they do not render
-			# bare in cover-aware skins. The jump row embeds the server
-			# total into its URL (mode=pages layer above) so flipping to it
-			# costs zero API calls.
+			# navigation rows. Play-whole-album sits on top; next-page and
+			# jump-to-page close the page. The nav rows reuse the first
+			# cover of this batch so they do not render bare in cover-aware
+			# skins. The jump row embeds the server total into its URL
+			# (mode=pages layer above) so flipping to it costs zero API
+			# calls; the play row points at the m3u route which expands to
+			# the FULL ordered album (one click = whole album in the queue).
 			my $total = $feed->{total};
 			my $have  = ($feed->{offset} || 0) + scalar @$items;
 			my ($cover) = map { $_->{image} || () } @$items;
+			if (scalar @$items) {
+				my $name = cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL');
+				$name .= " ($total)" if defined $total && $total =~ /^\d+$/;
+				unshift @$items, {
+					name  => $name,
+					type  => 'audio',
+					play  => _album_m3u_url($albumId),
+					image => $cover,
+				};
+			}
 			if (defined $total && $have < $total && scalar @$items) {
 				push @$items, {
 					name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
