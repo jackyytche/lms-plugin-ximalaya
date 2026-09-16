@@ -1183,6 +1183,65 @@ close $fh;
 				&& ($it->{jive}{window}{'icon-id'} || '') eq 'https://c/1');
 			check('albumItem: on_select=play -> touchToPlay item like TuneIn stations (0.1.37)',
 				($it->{on_select} || '') eq 'play');
+			check('albumItem: itemActions.info routes CM to ximalaya items with baked cmAlbum (0.1.38)',
+				$it->{itemActions}
+				&& $it->{itemActions}{info}
+				&& ($it->{itemActions}{info}{command}[0] || '') eq 'ximalaya'
+				&& ($it->{itemActions}{info}{command}[1] || '') eq 'items'
+				&& ($it->{itemActions}{info}{fixedParams}{cmAlbum} || '') eq '30816438'
+				&& ($it->{itemActions}{info}{fixedParams}{cmIcon} || '') eq 'https://c/1'
+				&& ($it->{itemActions}{info}{fixedParams}{cmTitle} || '') eq 'A - x [VIP]');
+		}
+
+		# --------------------------------- Daphile pre-play page CM (0.1.38)
+		# The big-artwork pre-play page renders its buttons from the row's
+		# context menu, in the Slim::Menu::TrackInfo tile shape only.
+		{
+			my $ti = Plugins::Ximalaya::Plugin::trackItem(3,
+				{ id => 549382127, title => 'T', paid => 0, cover => 'https://c/2' });
+			check('trackItem: itemActions.info carries baked cmTrack/cmTitle/cmIcon (0.1.38)',
+				$ti->{itemActions}
+				&& ($ti->{itemActions}{info}{command}[1] || '') eq 'items'
+				&& ($ti->{itemActions}{info}{fixedParams}{cmTrack} || '') eq '549382127'
+				&& ($ti->{itemActions}{info}{fixedParams}{cmTitle} || '') eq 'T'
+				&& ($ti->{itemActions}{info}{fixedParams}{cmIcon} || '') eq 'https://c/2');
+
+			my ($out, $client) = ({}, bless({}, 'StubClient'));
+			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
+				{ menu => 1, cmTrack => '549382127', cmTitle => "A:B\nC", cmIcon => 'https://c/2' });
+			my $tiles = $out->{items} || [];
+			check('cm track: 4 tiles, TrackInfo shape (type text + playcontrol + jive aliases)',
+				@$tiles == 4
+				&& ($tiles->[0]{type}  || '') eq 'text'
+				&& ($tiles->[0]{name}  || '') eq 'ADD_TO_END'
+				&& ($tiles->[0]{playcontrol} || '') eq 'add'
+				&& $tiles->[0]{jive}{actions}{go}
+				&& $tiles->[0]{jive}{actions}{play}
+				&& $tiles->[0]{jive}{actions}{add}
+				&& join('|', @{ $tiles->[0]{jive}{actions}{go}{cmd} || [] }) eq 'playlist|add|xmly://track/549382127'
+				&& ($tiles->[0]{jive}{actions}{go}{nextWindow} || '') eq 'parent');
+			check('cm track: play tile is itemplay + nowPlaying; insert tile is parent',
+				($tiles->[1]{playcontrol} || '') eq 'insert'
+				&& join('|', @{ $tiles->[1]{jive}{actions}{go}{cmd} || [] }) eq 'playlist|insert|xmly://track/549382127'
+				&& ($tiles->[2]{jive}{style} || '') eq 'itemplay'
+				&& ($tiles->[2]{jive}{actions}{go}{nextWindow} || '') eq 'nowPlaying'
+				&& join('|', @{ $tiles->[2]{jive}{actions}{go}{cmd} || [] }) eq 'playlist|play|xmly://track/549382127');
+			check('cm track: favorites tile binds jivefavorites add with sanitized title + icon',
+				($tiles->[3]{jive}{style} || '') eq 'item_fav'
+				&& join('|', @{ $tiles->[3]{jive}{actions}{go}{cmd} || [] }) eq 'jivefavorites|add'
+				&& ($tiles->[3]{jive}{actions}{go}{params}{url} || '') eq 'xmly://track/549382127'
+				&& ($tiles->[3]{jive}{actions}{go}{params}{title} || '') eq 'A:B C'
+				&& ($tiles->[3]{jive}{actions}{go}{params}{icon} || '') eq 'https://c/2'
+				&& ($tiles->[3]{jive}{actions}{go}{params}{isContextMenu} || '') eq '1');
+
+			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
+				{ menu => 1, cmAlbum => '12148879', cmTitle => 'AL', cmIcon => '' });
+			$tiles = $out->{items} || [];
+			check('cm album: play tile = whole album explodePlaylist; fav binds albumfeed URL',
+				@$tiles == 4
+				&& join('|', @{ $tiles->[2]{jive}{actions}{go}{cmd} || [] }) eq 'playlist|play|xmly://album/12148879'
+				&& ($tiles->[3]{jive}{actions}{go}{params}{url} || '') =~ /albumfeed\.html\?album=12148879/
+				&& !exists $tiles->[3]{jive}{actions}{go}{params}{icon});
 		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed

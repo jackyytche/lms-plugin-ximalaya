@@ -103,9 +103,118 @@ sub initPlugin {
 
 # ------------------------------------------------------------------ top menu
 
+# 0.1.38: Daphile's PRE-PLAY page (the big-artwork page that opens when a
+# track or a TuneIn station is tapped, with Play/Add buttons) is rendered
+# from the item's CONTEXT MENU response - and only for the full tile shape
+# Slim::Menu::TrackInfo emits: {type:'text', addAction:'go',
+# style:item_add|item_insert|itemplay|item_fav, actions carrying go+play+add
+# aliases}. The default XMLBrowser CM fork emits a bare {actions:{go}} shape
+# which Daphile paints WITHOUT buttons (verified on-device: local library
+# tracks get buttons, our tracks did not). itemActions.info on the rows
+# routes the CM request here (plain 'ximalaya items' query with cm*
+# params), and we answer with the working tile shape bound to plain
+# playlist commands on the xmly:// URLs - album URLs hit
+# ProtocolHandler::explodePlaylist, so the album page's Play button queues
+# the whole album. Strings and shapes mirror Slim::Menu::TrackInfo /
+# XMLBrowser::_playlistControlContextMenu exactly.
+sub _cm_action {
+	my ($cmd, $nextWindow) = @_;
+	return {
+		player     => 0,
+		cmd        => $cmd,
+		nextWindow => $nextWindow,
+	};
+}
+
+sub _cm_items {
+	my ($client, $args) = @_;
+	my $url    = $args->{url};
+	my $title  = $args->{title}  || 'Ximalaya';
+	my $icon   = $args->{icon}   || '';
+	my $favUrl = $args->{favUrl} || $url;
+
+	$title =~ s/[\r\n]+/ /g if defined $title;
+
+	my @items;
+
+	for my $tile (
+		[ 'ADD_TO_END', 'add',    'add',    [ 'playlist', 'add',    $url ], 'parent'     ],
+		[ 'PLAY_NEXT',  'insert', 'insert', [ 'playlist', 'insert', $url ], 'parent'     ],
+		[ 'PLAY',       'play',   'play',   [ 'playlist', 'play',   $url ], 'nowPlaying' ],
+	) {
+		my ($token, $method, $playcontrol, $cmd, $nextWindow) = @$tile;
+		my $action = _cm_action($cmd, $nextWindow);
+		my $jive = { actions => { $method => $action, play => $action, go => $action } };
+		$jive->{style} = 'itemplay' if $playcontrol eq 'play';
+		push @items, {
+			type        => 'text',
+			name        => cstring($client, $token),
+			playcontrol => $playcontrol,
+			jive        => $jive,
+		};
+	}
+
+	my %favParams = (
+		title         => $title,
+		url           => $favUrl,
+		type          => 'audio',
+		isContextMenu => 1,
+	);
+	$favParams{icon} = $icon if $icon;
+	push @items, {
+		type => 'text',
+		name => cstring($client, 'JIVE_SAVE_TO_FAVORITES'),
+		jive => {
+			style   => 'item_fav',
+			actions => {
+				go => {
+					player => 0,
+					cmd    => [ 'jivefavorites', 'add' ],
+					params => \%favParams,
+				},
+			},
+		},
+	};
+
+	return \@items;
+}
+
+# 0.1.38: the CM requests carry the tile payload as plain named params (the
+# itemActions fixedParams are baked per item at build time - XMLBrowser only
+# forwards fixedParams for the 'info' action, no per-item variables).
+sub _cm_feed_items {
+	my ($client, $params) = @_;
+
+	if (my $cmTrack = $params->{cmTrack}) {
+		return _cm_items($client, {
+			url   => 'xmly://track/' . $cmTrack,
+			title => $params->{cmTitle},
+			icon  => $params->{cmIcon},
+		});
+	}
+
+	if (my $cmAlbum = $params->{cmAlbum}) {
+		return _cm_items($client, {
+			url    => 'xmly://album/' . $cmAlbum,
+			title  => $params->{cmTitle},
+			icon   => $params->{cmIcon},
+			favUrl => _albumFeedUrl($cmAlbum),
+		});
+	}
+
+	return;
+}
+
 # 0.1.7 order: browse entries first, tools next, status last
 sub handleFeed {
 	my ($client, $cb, $params, $args) = @_;
+
+	# 0.1.38: context-menu requests (itemActions.info from the rows) - no
+	# API traffic, straight tile list.
+	if (my $items = _cm_feed_items($client, $params)) {
+		$cb->({ items => $items });
+		return;
+	}
 
 	my $logged = Plugins::Ximalaya::API->logged_in;
 
@@ -261,6 +370,21 @@ sub albumItem {
 			window => {
 				menuStyle => 'album',
 				'icon-id' => $album->{cover},
+			},
+		},
+		# 0.1.38: Daphile's pre-play page (big artwork + Play/Add) reads its
+		# buttons from the row's context menu; route it to our own tile list
+		# (handleFeed cmAlbum branch) in the TrackInfo shape that page
+		# renders. Play = whole album via explodePlaylist.
+		itemActions => {
+			info => {
+				command     => [ 'ximalaya', 'items' ],
+				fixedParams => {
+					menu    => 1,
+					cmAlbum => $album->{id},
+					cmTitle => $name,
+					cmIcon  => $album->{cover} || '',
+				},
 			},
 		},
 	};
@@ -467,6 +591,20 @@ sub trackItem {
 		type      => 'audio',
 		play      => "xmly://$t->{id}",
 		on_select => 'play',
+		# 0.1.38: context menu in the TrackInfo tile shape - the Daphile
+		# pre-play page renders its Play/Add buttons from these (see
+		# handleFeed cmTrack branch).
+		itemActions => {
+			info => {
+				command     => [ 'ximalaya', 'items' ],
+				fixedParams => {
+					menu    => 1,
+					cmTrack => $t->{id},
+					cmTitle => $t->{title},
+					cmIcon  => $t->{cover} || '',
+				},
+			},
+		},
 	};
 }
 
