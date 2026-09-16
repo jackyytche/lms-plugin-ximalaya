@@ -809,12 +809,36 @@ sub albumFeedHandler {
 	my $albumId = ($params->{album} || '') =~ /^(\d+)$/ ? $1 : '';
 	my $page    = (($params->{page} || 1) =~ /^(\d+)$/ ? $1 : 1) || 1;
 	$page = 1 if $page < 1;
-	my $width = _feed_page_width();
+	# 0.1.43: two slots reserved for the ALBUM/ARTIST label rows inside the
+	# shell (labels appear whenever album/simple succeeds); the whole shell
+	# content - labels + play-all + tracks + next + jump - must stay within
+	# ONE ui page. The same width feeds the pages-layer ceil math.
+	my $width = _feed_page_width() - 2;
 
 	my $finish = sub {
-		my ($items) = @_;
+		my ($items, $meta, $wrap) = @_;
 
 		my @rows;
+		# 0.1.43: songinfo header labels for the favourites path. The OPML
+		# channel CANNOT carry feed-level play/image/albumData (Slim::Formats::
+		# XML::parseOPML keeps only type/title/items/... at feed level), but
+		# outline ATTRIBUTES all survive (Slim/Formats/XML.pm L625-641) and
+		# Slim::Web::XMLBrowser folds labelled rows into the songinfo header
+		# (L861). Deliberately NO itemsHaveAudio trigger here (no duration/
+		# playall attributes): the header's allcontrol would collect every
+		# audio row url of the visible page (XMLBrowser.pm L663-725) and
+		# re-queue the exploded album PLUS the page's tracks - a duplicate
+		# mess. Per-row play/add buttons and the play-whole-album row keep
+		# working (row-level _makePlayLink falls back to the item url).
+		if ($meta) {
+			push @rows, '<outline text="' . _xml_escape($meta->{title})
+				. '" type="text" label="ALBUM"/>'
+				if ($meta->{title} // '') ne '';
+			push @rows, '<outline text="' . _xml_escape($meta->{announcer})
+				. '" type="text" label="ARTIST"/>'
+				if ($meta->{announcer} // '') ne '';
+		}
+
 		for my $it (@$items) {
 			my $name = _xml_escape($it->{name} || '');
 			next unless $name ne '';
@@ -836,8 +860,38 @@ sub albumFeedHandler {
 
 		my $body = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' . "\n"
 			. '<opml version="1.0"><head><title>Ximalaya album ' . _xml_escape($albumId)
-			. '</title></head><body>' . "\n"
-			. join("\n", @rows) . "\n</body></opml>";
+			. '</title></head><body>' . "\n";
+
+		# 0.1.43: wrap everything in ONE nested playlist outline. Feed-level
+		# keys are impossible on the OPML channel (parseOPML keeps only
+		# type/title/items/...), but ITEM attributes all survive - and when
+		# the shell row is clicked it BECOMES the subfeed
+		# (Slim::Web::XMLBrowser: subFeed has items -> normal list at
+		# L539-552; playUrl = subFeed->'play' at L564 -> songinfo play/add
+		# links = whole album; stash image = subFeed->'image' at L594 ->
+		# header artwork). The shell row itself shows the cover and a
+		# row-level play button (play = xmly://album -> explodePlaylist), so
+		# the first hop doubles as an album card. This is exactly how the
+		# stock radio plugins (AudioAddict -> jazzradio.com etc.) nest their
+		# channel lists - the user's reference page is the same two-hop
+		# shape.
+		if ($albumId && $wrap) {
+			my $shellName = ($meta && ($meta->{title} // '') ne '')
+				? _xml_escape($meta->{title})
+				: 'Ximalaya album ' . _xml_escape($albumId);
+			my $shellImg = ($meta && ($meta->{cover} // '') ne '')
+				? ' image="' . _xml_escape(Plugins::Ximalaya::API->_cover_large($meta->{cover})) . '"'
+				: '';
+			$body .= '<outline text="' . $shellName . '" type="playlist" play="'
+				. _xml_escape('xmly://album/' . $albumId) . '"' . $shellImg . '>' . "\n"
+				. (@rows ? join("\n", @rows) . "\n" : '')
+				. '</outline>' . "\n";
+		}
+		elsif (@rows) {
+			$body .= join("\n", @rows) . "\n";
+		}
+
+		$body .= '</body></opml>';
 
 		$response->content_type('text/xml; charset=utf-8');
 		$callback->($client, $params, \$body, $httpClient, $response);
@@ -868,60 +922,71 @@ sub albumFeedHandler {
 				};
 			}
 		}
-		$finish->(\@items);
+		$finish->(\@items, undef, 0);
 		return;
 	}
 
-	Plugins::Ximalaya::Plugin::albumHandler($client,
-		sub {
-			my ($feed) = @_;
-			my $items = $feed->{items} || [];
-			# navigation rows. Play-whole-album sits on top; next-page and
-			# jump-to-page close the page. The nav rows reuse the first
-			# cover of this batch so they do not render bare in cover-aware
-			# skins. The jump row embeds the server total into its URL
-			# (mode=pages layer above) so flipping to it costs zero API
-			# calls. The play row's xmly://album URL is expanded into the
-			# FULL ordered album by ProtocolHandler::explodePlaylist (one
-			# click = whole album in the queue).
-			my $total = $feed->{total};
-			my $have  = ($feed->{offset} || 0) + scalar @$items;
-			my ($cover) = map { $_->{image} || () } @$items;
-			if (scalar @$items) {
-				my $name = cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL');
-				$name .= " ($total)" if defined $total && $total =~ /^\d+$/;
-				unshift @$items, {
-					name  => $name,
-					type  => 'audio',
-					play  => 'xmly://album/' . $albumId,
-					image => $cover,
-				};
-			}
-			if (defined $total && $have < $total && scalar @$items) {
-				push @$items, {
-					name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
-					type  => 'link',
-					url   => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
-					image => $cover,
-				};
-			}
-			if (defined $total && $total > $width) {
-				my $pages = int(($total + $width - 1) / $width);
-				push @$items, {
-					name  => cstring($client, 'PLUGIN_XIMALAYA_JUMP_PAGES', $pages),
-					type  => 'link',
-					url   => _albumFeedUrl($albumId) . '&mode=pages&total=' . $total,
-					image => $cover,
-				};
-			}
-			$finish->($items);
-		},
-		# no_play_row: this feed adds its OWN leading play-all row (with
-		# count + cover) - the handler's trailing row and the +1 total are
-		# for the menu track list only
-		{ quantity => $width, index => ($page - 1) * $width, no_play_row => 1 },
-		$albumId,
-	);
+	# 0.1.43: album meta for the songinfo header labels, fetched BEFORE the
+	# track feed (the handler is already asynchronous - this just adds one
+	# more async hop). A failed/unavailable album/simple call degrades to
+	# undef -> the page renders exactly as before (bare track list).
+	my $run = sub {
+		my ($meta) = @_;
+
+		Plugins::Ximalaya::Plugin::albumHandler($client,
+			sub {
+				my ($feed) = @_;
+				my $items = $feed->{items} || [];
+				# navigation rows. Play-whole-album sits on top; next-page
+				# and jump-to-page close the page. The nav rows reuse the
+				# first cover of this batch so they do not render bare in
+				# cover-aware skins. The jump row embeds the server total
+				# into its URL (mode=pages layer above) so flipping to it
+				# costs zero API calls. The play row's xmly://album URL is
+				# expanded into the FULL ordered album by
+				# ProtocolHandler::explodePlaylist (one click = whole album
+				# in the queue).
+				my $total = $feed->{total};
+				my $have  = ($feed->{offset} || 0) + scalar @$items;
+				my ($cover) = map { $_->{image} || () } @$items;
+				if (scalar @$items) {
+					my $name = cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL');
+					$name .= " ($total)" if defined $total && $total =~ /^\d+$/;
+					unshift @$items, {
+						name  => $name,
+						type  => 'audio',
+						play  => 'xmly://album/' . $albumId,
+						image => $cover,
+					};
+				}
+				if (defined $total && $have < $total && scalar @$items) {
+					push @$items, {
+						name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
+						type  => 'link',
+						url   => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
+						image => $cover,
+					};
+				}
+				if (defined $total && $total > $width) {
+					my $pages = int(($total + $width - 1) / $width);
+					push @$items, {
+						name  => cstring($client, 'PLUGIN_XIMALAYA_JUMP_PAGES', $pages),
+						type  => 'link',
+						url   => _albumFeedUrl($albumId) . '&mode=pages&total=' . $total,
+						image => $cover,
+					};
+				}
+				$finish->($items, $meta, 1);
+			},
+			# no_play_row: this feed adds its OWN leading play-all row (with
+			# count + cover) - the handler's trailing row and the +1 total
+			# are for the menu track list only
+			{ quantity => $width, index => ($page - 1) * $width, no_play_row => 1 },
+			$albumId,
+		);
+	};
+
+	Plugins::Ximalaya::API->albumInfo($albumId, $run, sub { $run->(undef) });
 
 	return;
 }
