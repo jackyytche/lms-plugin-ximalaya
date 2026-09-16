@@ -582,7 +582,9 @@ close $fh;
 		"@calls" eq 'mobile:83701277:1' && $out->{offset} == 0
 		&& @{ $out->{items} || [] } == 2);
 	check('album: feed-level actions = header play/add/insert whole-album (Spotty-style base actions)',
-		join('|', @{ $out->{actions}{play}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
+		join('|', @{ $out->{actions}{playall}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
+		&& join('|', @{ $out->{actions}{addall}{command} || [] }) eq 'playlist|add|xmly://album/83701277'
+		&& join('|', @{ $out->{actions}{play}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
 		&& join('|', @{ $out->{actions}{add}{command} || [] }) eq 'playlist|add|xmly://album/83701277'
 		&& join('|', @{ $out->{actions}{insert}{command} || [] }) eq 'playlist|insert|xmly://album/83701277'
 		&& ref $out->{actions}{play}{fixedParams} eq 'HASH');
@@ -1175,6 +1177,10 @@ close $fh;
 				&& ($it->{play} || '') eq 'xmly://album/30816438'
 				&& ($it->{favorites_url} || '') =~ /albumfeed\.html\?album=30816438/
 				&& ($it->{name} || '') eq 'A - x [VIP]');
+			check('albumItem: jive escape hatch asks album-styled window (0.1.36)',
+				$it->{jive} && ref $it->{jive}{window} eq 'HASH'
+				&& ($it->{jive}{window}{menuStyle} || '') eq 'album'
+				&& ($it->{jive}{window}{'icon-id'} || '') eq 'https://c/1');
 		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed

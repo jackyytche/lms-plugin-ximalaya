@@ -228,6 +228,13 @@ sub albumItem {
 	# xmly://album/<id>, which ProtocolHandler::explodePlaylist expands into
 	# the full ordered track list (the native mechanism LMS uses for
 	# Spotify albums). The row itself still DESCENDS into the track list.
+	#
+	# 0.1.36: the jive escape hatch (Slim::Control::XMLBrowser copies
+	# item->{jive}->{window} verbatim into the jive item hash) lets the row
+	# ask the UI to open the album page as an ALBUM-styled window
+	# (SlimBrowser _newWindowSpec: item.window.menuStyle 'album' = the same
+	# menu style the local album view / current-playlist album list use).
+	# Daphile skins decide what chrome they paint for that style.
 	return {
 		name        => $name,
 		image       => $album->{cover},
@@ -238,6 +245,12 @@ sub albumItem {
 		favorites_url   => _albumFeedUrl($album->{id}),
 		favorites_title => $name,
 		favorites_type  => 'link',
+		jive => {
+			window => {
+				menuStyle => 'album',
+				'icon-id' => $album->{cover},
+			},
+		},
 	};
 }
 
@@ -456,6 +469,20 @@ sub trackItem {
 sub _album_play_actions {
 	my ($albumId) = @_;
 	return {
+		# 0.1.36: playall/addall are the action names Slim::Menu::BrowseLibrary
+		# uses for the local album pages (XMLBrowser prefers them over
+		# play/add whenever the player's playtrackalbum preference is on -
+		# which Daphile ships enabled). Keeping BOTH names means the header
+		# play button resolves identically whichever way the preference is
+		# set.
+		playall => {
+			command     => [ 'playlist', 'play',   'xmly://album/' . $albumId ],
+			fixedParams => {},
+		},
+		addall => {
+			command     => [ 'playlist', 'add',    'xmly://album/' . $albumId ],
+			fixedParams => {},
+		},
 		play => {
 			command     => [ 'playlist', 'play',   'xmly://album/' . $albumId ],
 			fixedParams => {},
