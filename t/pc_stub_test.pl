@@ -966,6 +966,11 @@ close $fh;
 
 # ---------------------------------------------- album feed (starred) 0.1.29
 {
+	# 0.1.31: the feed page width follows the same server preference the web
+	# UI uses for slicing (Slim::Web::Pages::Common::pageInfo falls back to
+	# preferences('server')->get('itemsPerPage'))
+	preferences('server')->set('itemsPerPage', 50);
+
 	# stub response object capturing content_type
 	my $resp = bless {}, 'XimaStubResponse';
 	local *XimaStubResponse::content_type = sub {
@@ -1013,6 +1018,78 @@ close $fh;
 			undef, $resp);
 		check('feed: last page has no next-page link',
 			$body =~ /xmly:\/\/759074957/ && $body !~ /&amp;page=3/);
+	}
+
+	# 0.1.31 ghost-page fix. The web UI slices a fetched feed per page
+	# (Slim::Web::XMLBrowser caches the whole feed; Pages::Common::pageInfo
+	# slices; no re-fetch), so a feed page must never exceed the UI page
+	# width: width = itemsPerPage - 1 -> 49 tracks + 1 next-page row = 50
+	# outlines = exactly ONE ui page (was 50+1=51 -> phantom "page 2" holding
+	# only the next-page row).
+	{
+		my (@sizes, @pages);
+		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+			push @sizes, $size;
+			push @pages, $page;
+			$cb->([ map {
+				{ id => 900000000 + $_, title => "t$_", paid => 0, cover => "https://img/$_" }
+			} 1 .. $size ], 100);
+		};
+		my $body;
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 1 },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		my $rows = () = $body =~ /<outline /g;
+		check('feed: width=49 -> 49 tracks + next = 50 rows = one UI page (no phantom page)',
+			$rows == 50 && $sizes[0] == 49 && $pages[0] == 1);
+		check('feed: page-1 numbering 1..49, audio rows carry image cover attr',
+			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="49. t49"\E/
+			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/49"\E});
+		check('feed: next-page row carries first-batch cover + page=2 url',
+			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_NEXT_PAGE" URL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777&amp;page=2" type="link" image="https://img/1"/>\E});
+
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 2 },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		$rows = () = $body =~ /<outline /g;
+		check('feed: page=2 keeps offset math (titles numbered 50..98) and still one page',
+			$rows == 50 && $pages[1] == 2 && $sizes[1] == 49
+			&& $body =~ /\Qtext="50. t1"\E/ && $body =~ /\Qtext="98. t49"\E/
+			&& $body =~ /&amp;page=3/);
+	}
+
+	# width helper: follows itemsPerPage, clamped to the API cap, garbage-
+	# proof (0.1.31)
+	{
+		my $srv = preferences('server');
+		$srv->set('itemsPerPage', 25);
+		check('feed: width follows itemsPerPage=25 -> 24',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 24);
+		$srv->set('itemsPerPage', 200);
+		check('feed: width capped at PC_SHOW_MAX for huge itemsPerPage',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == Plugins::Ximalaya::API::PC_SHOW_MAX());
+		$srv->set('itemsPerPage', 1);
+		check('feed: pathological itemsPerPage=1 falls back to default 50 -> 49',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 49);
+		$srv->set('itemsPerPage', 'abc');
+		check('feed: non-numeric itemsPerPage falls back to default 50 -> 49',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 49);
+
+		# end-to-end at itemsPerPage=25: 24 tracks + next = 25 rows
+		$srv->set('itemsPerPage', 25);
+		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
+			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
+			$cb->([ map {
+				{ id => 800000000 + $_, title => "u$_", paid => 0, cover => '' }
+			} 1 .. $size ], 100);
+		};
+		my $body;
+		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '888', page => 1 },
+			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
+		my $rows = () = $body =~ /<outline /g;
+		check('feed: itemsPerPage=25 -> 24 tracks + next = 25 rows',
+			$rows == 25 && $body =~ /\Qtext="24. u24"\E/);
+
+		$srv->set('itemsPerPage', 50);
 	}
 }
 

@@ -421,6 +421,26 @@ sub _xml_escape {
 	return $s;
 }
 
+# 0.1.31: per-feed-page TRACK width. The web UI pages a fetched feed by
+# SLICING it: Slim::Web::XMLBrowser fetches the URL once, caches the whole
+# parsed feed in a browse session and Slim::Web::Pages::Common::pageInfo
+# slices it per page - the UI never re-fetches with a page parameter. So a
+# feed page must never carry MORE items than the UI page width, or the
+# overflow becomes a phantom page holding only the next-page row (the
+# 0.1.29 bug: 50 tracks + 1 next-page row = 51 items vs 50 per page ->
+# "page 2 shows nothing but next page"). Width = itemsPerPage - 1 (room
+# for the next-page row), capped at PC_SHOW_MAX (the API page width).
+# itemsPerPage is the same server preference the UI uses (pageInfo falls
+# back to preferences('server')->get('itemsPerPage'); Daphile default 50).
+sub _feed_page_width {
+	my $pp = eval { preferences('server')->get('itemsPerPage') };
+	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 2;    # garbage/small -> Daphile default
+	$pp = 500 if $pp > 500;                               # paranoia clamp
+	my $w = $pp - 1;
+	$w = PC_SHOW_MAX() if $w > PC_SHOW_MAX();
+	return $w;
+}
+
 # 0.1.29: the web page behind a starred album's Favourites entry. LMS
 # fetches it server-side as a remote OPML feed when the user clicks the
 # favourite (Slim::Formats::XML), so we serve classic outline attributes
@@ -428,12 +448,17 @@ sub _xml_escape {
 # protocol handler is registered, playback verified), the next-page row is
 # type=link pointing back at this route. Reuses albumHandler's
 # mobile -> pc -> web routing + windowing untouched.
+# 0.1.31: rows are laid out on _feed_page_width() boundaries so every
+# fetched page fits on ONE UI page (no phantom pager page), and outlines
+# carry image="..." covers (Slim::Formats::XML copies unknown outline
+# attributes verbatim into the item hash; Daphile renders item images).
 sub albumFeedHandler {
 	my ($client, $params, $callback, $httpClient, $response) = @_;
 
 	my $albumId = ($params->{album} || '') =~ /^(\d+)$/ ? $1 : '';
 	my $page    = (($params->{page} || 1) =~ /^(\d+)$/ ? $1 : 1) || 1;
 	$page = 1 if $page < 1;
+	my $width = _feed_page_width();
 
 	my $finish = sub {
 		my ($items) = @_;
@@ -443,17 +468,18 @@ sub albumFeedHandler {
 			my $name = _xml_escape($it->{name} || '');
 			next unless $name ne '';
 			my $type = $it->{type} || '';
+			my $img  = $it->{image} ? ' image="' . _xml_escape($it->{image}) . '"' : '';
 			if ($type eq 'audio' && $it->{play}) {
 				push @rows, '<outline text="' . $name . '" URL="'
-					. _xml_escape($it->{play}) . '" type="audio"/>';
+					. _xml_escape($it->{play}) . '" type="audio"' . $img . '/>';
 			}
 			elsif (($type eq 'link' || $type eq 'audio') && $it->{url}) {
 				push @rows, '<outline text="' . $name . '" URL="'
-					. _xml_escape($it->{url}) . '" type="link"/>';
+					. _xml_escape($it->{url}) . '" type="link"' . $img . '/>';
 			}
 			else {
 				# error/status rows degrade to plain text entries
-				push @rows, '<outline text="' . $name . '" type="text"/>';
+				push @rows, '<outline text="' . $name . '" type="text"' . $img . '/>';
 			}
 		}
 
@@ -477,19 +503,23 @@ sub albumFeedHandler {
 			my ($feed) = @_;
 			my $items = $feed->{items} || [];
 
-			# next page: only when the windowing reports more to come
+			# next page: only when the windowing reports more to come. The
+			# row reuses the first cover of this batch so the link does not
+			# render bare in cover-aware skins.
 			my $total = $feed->{total};
 			my $have  = ($feed->{offset} || 0) + scalar @$items;
 			if (defined $total && $have < $total && scalar @$items) {
+				my ($cover) = map { $_->{image} || () } @$items;
 				push @$items, {
-					name => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
-					type => 'link',
-					url  => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
+					name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
+					type  => 'link',
+					url   => _albumFeedUrl($albumId) . '&page=' . ($page + 1),
+					image => $cover,
 				};
 			}
 			$finish->($items);
 		},
-		{ quantity => 50, index => ($page - 1) * 50 },
+		{ quantity => $width, index => ($page - 1) * $width },
 		$albumId,
 	);
 
