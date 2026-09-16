@@ -1205,6 +1205,10 @@ close $fh;
 				&& ($ti->{itemActions}{info}{fixedParams}{cmTrack} || '') eq '549382127'
 				&& ($ti->{itemActions}{info}{fixedParams}{cmTitle} || '') eq 'T'
 				&& ($ti->{itemActions}{info}{fixedParams}{cmIcon} || '') eq 'https://c/2');
+			check('trackItem: explicit single-track play/add/insert beat base whole-album fallback (0.1.39)',
+				join('|', @{ $ti->{itemActions}{play}{command}   || [] }) eq 'playlist|play|xmly://549382127'
+				&& join('|', @{ $ti->{itemActions}{add}{command}    || [] }) eq 'playlist|add|xmly://549382127'
+				&& join('|', @{ $ti->{itemActions}{insert}{command} || [] }) eq 'playlist|insert|xmly://549382127');
 
 			my ($out, $client) = ({}, bless({}, 'StubClient'));
 			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
@@ -1238,10 +1242,19 @@ close $fh;
 				{ menu => 1, cmAlbum => '12148879', cmTitle => 'AL', cmIcon => '' });
 			$tiles = $out->{items} || [];
 			check('cm album: play tile = whole album explodePlaylist; fav binds albumfeed URL',
-				@$tiles == 4
+				@$tiles == 5
 				&& join('|', @{ $tiles->[2]{jive}{actions}{go}{cmd} || [] }) eq 'playlist|play|xmly://album/12148879'
 				&& ($tiles->[3]{jive}{actions}{go}{params}{url} || '') =~ /albumfeed\.html\?album=12148879/
 				&& !exists $tiles->[3]{jive}{actions}{go}{params}{icon});
+			check('cm album: browse tile descends into the track list via cmBrowseAlbum (0.1.39)',
+				($tiles->[4]{name} || '') eq 'PLUGIN_XIMALAYA_BROWSE_TRACKS'
+				&& ($tiles->[4]{jive}{actions}{go}{cmd}[0] || '') eq 'ximalaya'
+				&& ($tiles->[4]{jive}{actions}{go}{params}{cmBrowseAlbum} || '') eq '12148879');
+
+			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
+				{ menu => 1, cmBrowseAlbum => '12148879', index => 0, quantity => 50 });
+			check('cm browse: descends into the album track list feed (0.1.39)',
+				exists $out->{items} && @{ $out->{items} || [] } >= 1);
 		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed

@@ -87,6 +87,10 @@ PLUGIN_XIMALAYA_PLAY_ALL
 	EN	Play whole album
 	ZH_CN	播放整张专辑
 
+PLUGIN_XIMALAYA_BROWSE_TRACKS
+	EN	Browse tracks
+	ZH_CN	浏览曲目列表
+
 PLUGIN_XIMALAYA_JUMP_PAGES
 	EN	Jump to page... (%s pages)
 	ZH_CN	跳转到第…页（共%s页）

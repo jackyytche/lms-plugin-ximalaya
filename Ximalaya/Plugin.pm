@@ -176,6 +176,25 @@ sub _cm_items {
 		},
 	};
 
+	# 0.1.39: album context menu gains a descend tile so the big-artwork page
+	# is a complete landing spot: play/add/insert the whole album, browse the
+	# track list, save to favourites.
+	if (my $browse = $args->{browse}) {
+		push @items, {
+			type => 'text',
+			name => cstring($client, 'PLUGIN_XIMALAYA_BROWSE_TRACKS'),
+			jive => {
+				actions => {
+				go => {
+					player => 0,
+					cmd    => [ 'ximalaya', 'items' ],
+					params => { menu => 'ximalaya', cmBrowseAlbum => $browse },
+				},
+				},
+			},
+		};
+	}
+
 	return \@items;
 }
 
@@ -199,6 +218,7 @@ sub _cm_feed_items {
 			title  => $params->{cmTitle},
 			icon   => $params->{cmIcon},
 			favUrl => _albumFeedUrl($cmAlbum),
+			browse => $cmAlbum,
 		});
 	}
 
@@ -208,6 +228,13 @@ sub _cm_feed_items {
 # 0.1.7 order: browse entries first, tools next, status last
 sub handleFeed {
 	my ($client, $cb, $params, $args) = @_;
+
+	# 0.1.39: "Browse tracks" tile in the album context menu - descends into
+	# the album's track list (same handler the album rows use).
+	if (my $cmBrowse = $params->{cmBrowseAlbum}) {
+		albumHandler($client, $cb, $params, $cmBrowse);
+		return;
+	}
 
 	# 0.1.38: context-menu requests (itemActions.info from the rows) - no
 	# API traffic, straight tile list.
@@ -591,11 +618,14 @@ sub trackItem {
 		type      => 'audio',
 		play      => "xmly://$t->{id}",
 		on_select => 'play',
-		# 0.1.38: context menu in the TrackInfo tile shape - the Daphile
-		# pre-play page renders its Play/Add buttons from these (see
-		# handleFeed cmTrack branch).
+		# 0.1.39: EXPLICIT single-track play/add/insert actions on the row.
+		# Without these, Daphile's row buttons fall back to the page-level
+		# base actions (0.1.35's whole-album commands) - so the row's play
+		# button queued the WHOLE album instead of the clicked track.
+		# itemActions.play also re-binds actions.go (XMLBrowser L1306-1308,
+		# goAction is 'play' here), so tapping the row plays just that track.
 		itemActions => {
-			info => {
+			info   => {
 				command     => [ 'ximalaya', 'items' ],
 				fixedParams => {
 					menu    => 1,
@@ -604,6 +634,9 @@ sub trackItem {
 					cmIcon  => $t->{cover} || '',
 				},
 			},
+			play   => { command => [ 'playlist', 'play',   "xmly://$t->{id}" ], fixedParams => {} },
+			add    => { command => [ 'playlist', 'add',    "xmly://$t->{id}" ], fixedParams => {} },
+			insert => { command => [ 'playlist', 'insert', "xmly://$t->{id}" ], fixedParams => {} },
 		},
 	};
 }
