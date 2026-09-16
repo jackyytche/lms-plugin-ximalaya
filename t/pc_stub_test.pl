@@ -581,6 +581,11 @@ close $fh;
 	check('album: VIP album served by mobile list, one request',
 		"@calls" eq 'mobile:83701277:1' && $out->{offset} == 0
 		&& @{ $out->{items} || [] } == 2);
+	check('album: feed-level actions = header play/add/insert whole-album (Spotty-style base actions)',
+		join('|', @{ $out->{actions}{play}{command} || [] }) eq 'playlist|play|xmly://album/83701277'
+		&& join('|', @{ $out->{actions}{add}{command} || [] }) eq 'playlist|add|xmly://album/83701277'
+		&& join('|', @{ $out->{actions}{insert}{command} || [] }) eq 'playlist|insert|xmly://album/83701277'
+		&& ref $out->{actions}{play}{fixedParams} eq 'HASH');
 	check('album: EXACT total=1388 from mobile totalCount, +1 for the trailing play-all row',
 		$out->{total} == 1389);
 	check('album: per-track isPaid restored ([VIP] prefix on mobile data)',

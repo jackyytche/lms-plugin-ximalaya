@@ -313,6 +313,15 @@ sub albumHandler {
 			items  => \@items,
 			offset => $offset,
 			(defined $total ? (total => $total + ($args->{no_play_row} ? 0 : 1)) : ()),
+			# 0.1.35: feed-level actions become the level's BASE actions
+			# (Slim::Control::XMLBrowser menuMode: _makeAction($feedActions,
+			# 'play'|'add'|'insert')) - the UI renders them as the HEADER
+			# play/add buttons next to the album image, exactly like a local
+			# album page. Each command plays/adds the WHOLE album through
+			# ProtocolHandler::explodePlaylist (same URL as the album row).
+			($albumId =~ /^\d+$/
+				? (actions => _album_play_actions($albumId))
+				: ()),
 		});
 	};
 	my $fail = sub {
@@ -433,6 +442,32 @@ sub trackItem {
 		type      => 'audio',
 		play      => "xmly://$t->{id}",
 		on_select => 'play',
+	};
+}
+
+# 0.1.35: feed-level actions for an album track list (the menu level). XMLBrowser
+# (menuMode) feeds these through _makeAction() into the result's 'base' actions -
+# the play/add buttons the UI renders in the page HEADER next to the album image
+# (the same chrome a local album page gets). Each command hits the xmly://album
+# URL, which ProtocolHandler::explodePlaylist expands to the full ordered track
+# list - one tap plays/queues the entire album. Shape per XMLBrowser::_makeAction:
+#   command     -> becomes the action's cmd
+#   fixedParams -> becomes its params ('menu' is force-added there)
+sub _album_play_actions {
+	my ($albumId) = @_;
+	return {
+		play => {
+			command     => [ 'playlist', 'play',   'xmly://album/' . $albumId ],
+			fixedParams => {},
+		},
+		add => {
+			command     => [ 'playlist', 'add',    'xmly://album/' . $albumId ],
+			fixedParams => {},
+		},
+		insert => {
+			command     => [ 'playlist', 'insert', 'xmly://album/' . $albumId ],
+			fixedParams => {},
+		},
 	};
 }
 
