@@ -581,8 +581,8 @@ close $fh;
 	check('album: VIP album served by mobile list, one request',
 		"@calls" eq 'mobile:83701277:1' && $out->{offset} == 0
 		&& @{ $out->{items} || [] } == 2);
-	check('album: EXACT total=1388 from mobile totalCount (page count right from page 1)',
-		$out->{total} == 1388);
+	check('album: EXACT total=1388 from mobile totalCount, +1 for the trailing play-all row',
+		$out->{total} == 1389);
 	check('album: per-track isPaid restored ([VIP] prefix on mobile data)',
 		($out->{items}[0]{name} || '') =~ /^\[VIP\]/ && ($out->{items}[1]{name} || '') !~ /VIP/);
 
@@ -593,7 +593,7 @@ close $fh;
 		{ index => 50, quantity => 50 }, 83701277);
 	check('album: mobile page 2 at offset 50, numbering starts at 51',
 		"@calls" eq 'mobile:83701277:2' && $out->{offset} == 50
-		&& ($out->{items}[0]{name} || '') =~ /^\[VIP\] 51\./ && $out->{total} == 1388);
+		&& ($out->{items}[0]{name} || '') =~ /^\[VIP\] 51\./ && $out->{total} == 1389);
 
 	# free album: mobile empty -> pc fail -> web success (quantity page math)
 	@calls = ();
@@ -601,21 +601,27 @@ close $fh;
 		{ index => 0, quantity => 50 }, 555);
 	check('album: free album + pc failure falls through to web',
 		"@calls" eq 'mobile:555:1 pc:555:1 web:555:1:50'
-		&& $out->{offset} == 0 && @{ $out->{items} || [] } == 1 && $out->{total} == 1388);
+		&& $out->{offset} == 0 && @{ $out->{items} || [] } == 1 && $out->{total} == 1389);
 
 	# free album served by pc show: hasMore=1 -> estimate off+n+qty (52)
 	@calls = ();
 	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
 		{ index => 0, quantity => 50 }, 888);
 	check('album: free album (mobile empty) served by pc show, estimate total',
-		"@calls" eq 'mobile:888:1 pc:888:1' && $out->{total} == 52);
+		"@calls" eq 'mobile:888:1 pc:888:1' && $out->{total} == 53);
 
-	# free album last pc page: hasMore=0 -> exact off+n (1)
+	# free album last pc page: hasMore=0 -> exact off+n (1); the window
+	# covers the trailing play-all position -> row renders on this page
 	@calls = ();
 	Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
 		{ index => 0, quantity => 50 }, 777);
 	check('album: free album last pc page -> exact total (off+n=1)',
-		$out->{total} == 1 && "@calls" eq 'mobile:777:1 pc:777:1');
+		$out->{total} == 2 && "@calls" eq 'mobile:777:1 pc:777:1');
+	check('album: trailing play-whole-album row with xmly://album play url',
+		@{ $out->{items} || [] } == 2
+		&& ($out->{items}[1]{name} || '') eq 'PLUGIN_XIMALAYA_PLAY_ALL'
+		&& $out->{items}[1]{type} eq 'audio'
+		&& ($out->{items}[1]{play} || '') eq 'xmly://album/777');
 
 	# all three paths failing -> single error item (no dead feed)
 	@calls = ();
@@ -632,7 +638,7 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
 			{ index => 0, quantity => 50 }, 83701277);
 		check('album: pc off -> web only, web success path intact',
-			"@calls" eq 'web:83701277:1:50' && $out->{total} == 1388);
+			"@calls" eq 'web:83701277:1:50' && $out->{total} == 1389);
 		$prefs->set('pc_channel', 1);
 	}
 
@@ -643,7 +649,7 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
 			{ index => 0, quantity => 50 }, 83701277);
 		check('album: mobile pref off -> straight to pc (no mobile call)',
-			"@calls" eq 'pc:83701277:1' && $out->{total} == 52
+			"@calls" eq 'pc:83701277:1' && $out->{total} == 53
 			&& Plugins::Ximalaya::API->mobile_enabled == 0);
 		$prefs->set('mobile_channel', 1);
 		check('album: mobile pref restored -> enabled again',
@@ -1006,7 +1012,7 @@ close $fh;
 		check('feed: audio row with escaped title + xmly play url',
 			$body =~ m{\Q<outline text="[VIP] 1. T&amp;T &lt;feat&gt;" URL="xmly://759074956" type="audio"/>\E});
 		check('feed: play-all row present for a single-track album too',
-			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (2)" URL="http://192.0.2.1:9000/plugins/Ximalaya/album-30816438.m3u" type="audio"/>\E});
+			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (2)" URL="xmly://album/30816438" type="audio"/>\E});
 		check('feed: next-page link back at the route with escaped &page',
 			$body =~ m{\QURL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=30816438&amp;page=2" type="link"\E});
 
@@ -1047,8 +1053,8 @@ close $fh;
 		my $rows = () = $body =~ /<outline /g;
 		check('feed: width=47 -> play-all + 47 tracks + next + jump = 50 rows = one UI page',
 			$rows == 50 && $sizes[0] == 47 && $pages[0] == 1);
-		check('feed: play-all row on top points at the m3u route with batch cover',
-			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (100)" URL="http://192.0.2.1:9000/plugins/Ximalaya/album-777.m3u" type="audio" image="https://img/1"/>\E});
+		check('feed: play-all row on top carries xmly://album play url + batch cover',
+			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (100)" URL="xmly://album/777" type="audio" image="https://img/1"/>\E});
 		check('feed: page-1 numbering 1..47, audio rows carry image cover attr',
 			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="47. t47"\E/
 			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/47"\E});
@@ -1145,12 +1151,26 @@ close $fh;
 		$srv->set('itemsPerPage', 50);
 	}
 
-	# --------------------------------------- play whole album (0.1.33)
+	# --------------------------------------- play whole album (0.1.34)
 	# albumTracksAll chains the three list tiers into one ordered list (1h
-	# in-memory cache); the m3u route turns it into the playlist LMS expands
-	# on play - the remote equivalent of the local whole-album enqueue.
+	# in-memory cache); ProtocolHandler::explodePlaylist hands it to LMS's
+	# playlist playtracks listRef - the native Spotify-album mechanism, and
+	# the remote equivalent of the local whole-album enqueue.
 	{
 		Plugins::Ximalaya::API->_clear_alltracks_cache();
+
+		# album rows gain the whole-album play url (0.1.34)
+		{
+			my $it = Plugins::Ximalaya::Plugin::albumItem({
+				id => 30816438, title => 'A', announcer => 'x', paid => 1,
+				cover => 'https://c/1',
+			});
+			check('albumItem: row keeps descend, gains whole-album play url',
+				ref $it->{url} eq 'CODE'
+				&& ($it->{play} || '') eq 'xmly://album/30816438'
+				&& ($it->{favorites_url} || '') =~ /albumfeed\.html\?album=30816438/
+				&& ($it->{name} || '') eq 'A - x [VIP]');
+		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed
 		# page width governs the short-page stop (server may clamp pageSize)
@@ -1205,9 +1225,10 @@ close $fh;
 				!defined $err && join(',', map { $_->{id} } @$list) eq '11,12,13');
 		}
 
-		# the m3u route itself: playlist content type + ordered xmly://
-		# entries (own album id + fresh mock - the fallback scenario above
-		# wiped the shared alltracks cache)
+		# the NATIVE expansion (0.1.34): ProtocolHandler::explodePlaylist
+		# turns xmly://album/<id> into the ordered xmly:// track list (LMS
+		# executes 'playlist playtracks listRef' with it - the Spotify
+		# album mechanism); plain track URLs explode to themselves
 		{
 			Plugins::Ximalaya::API->_clear_alltracks_cache();
 			local *Plugins::Ximalaya::API::albumTracksMobile = sub {
@@ -1215,29 +1236,25 @@ close $fh;
 				$cb->([ { id => 21, title => 'r1', paid => 0, cover => '' },
 				        { id => 22, title => 'r2', paid => 0, cover => '' } ], 2);
 			};
-			my ($body, $ct);
-			Plugins::Ximalaya::Plugin::albumM3uHandler(undef,
-				{ path => 'plugins/Ximalaya/album-999.m3u' },
-				sub { (undef, undef, my $b, undef, my $r) = @_; $body = $$b; $ct = $r->{ct}; },
-				undef, $resp);
-			my $c1 = defined $body;
-			my $c2 = $c1 && $body =~ m{^\Q#EXTM3U\E\n};
-			my $c3 = $c1 && $body =~ m{\Q#EXTINF:-1,r1\E\n\Qxmly://21\E};
-			my $c4 = $c1 && $body =~ m{\Q#EXTINF:-1,r2\E\n\Qxmly://22\E};
-			my $c5 = defined $ct && $ct eq 'audio/x-mpegurl';
-			check('m3u: route emits #EXTM3U + ordered xmly:// entries + playlist content type',
-				$c1 && $c2 && $c3 && $c4 && $c5);
-		}
+			my $urls;
+			Plugins::Ximalaya::ProtocolHandler->explodePlaylist(undef, 'xmly://album/999',
+				sub { $urls = shift });
+			check('explode: album URL -> ordered xmly:// track list',
+				ref $urls eq 'ARRAY' && join('|', @$urls) eq 'xmly://21|xmly://22');
 
-		# route with no parseable album id -> bare playlist, no crash
-		{
-			my $body;
-			Plugins::Ximalaya::Plugin::albumM3uHandler(undef,
-				{ path => 'plugins/Ximalaya/album-.m3u' },
-				sub { (undef, undef, my $b) = @_; $body = $$b; },
-				undef, $resp);
-			check('m3u: unparseable path -> bare #EXTM3U, no crash',
-				defined $body && $body eq "#EXTM3U\n");
+			my $self2;
+			Plugins::Ximalaya::ProtocolHandler->explodePlaylist(undef, 'xmly://759074956',
+				sub { $self2 = shift });
+			check('explode: track URL -> itself (single-track play unchanged)',
+				ref $self2 eq 'ARRAY' && "@$self2" eq 'xmly://759074956');
+
+			# the first explode fed the 1h cache: repeat explode is zero-API
+			local *Plugins::Ximalaya::API::albumTracksMobile = sub { die "cache miss" };
+			my $urls2;
+			Plugins::Ximalaya::ProtocolHandler->explodePlaylist(undef, 'xmly://album/999',
+				sub { $urls2 = shift });
+			check('explode: repeat album explode served from the 1h cache',
+				ref $urls2 eq 'ARRAY' && @$urls2 == 2);
 		}
 	}
 }

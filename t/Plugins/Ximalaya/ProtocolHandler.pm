@@ -38,6 +38,39 @@ Slim::Player::ProtocolHandlers->registerHandler('xmly', __PACKAGE__);
 # offset and honors it.
 sub canTranscodeSeek { 1 }
 
+# 0.1.34: the NATIVE whole-album enqueue. When LMS runs playlist play/add on
+# a URL whose protocol handler can explodePlaylist, it asks the handler for
+# the full track list and executes 'playlist playtracks/addtracks listRef'
+# with it (Slim::Control::Commands.pm L1383-1400 - the exact mechanism the
+# source cites as "eg. Spotify Album -> track list"). xmly://album/<id>
+# explodes into the ordered xmly:// track URL list (API::albumTracksAll:
+# chained list tiers, 1h in-memory cache); each track then resolves lazily
+# at its turn through the normal chain. Plain track URLs explode to
+# themselves so single-track play/add behave exactly as before. (The 0.1.33
+# m3u route was the wrong tool: the plain HTTP handler has no
+# explodePlaylist, so the .m3u URL was played as ONE audio stream - silence.)
+sub explodePlaylist {
+	my ($class, $client, $url, $cb) = @_;
+
+	my ($albumId) = $url =~ m|^xmly://album/(\d+)$|;
+	unless ($albumId) {
+		$cb->([$url]);
+		return;
+	}
+
+	Plugins::Ximalaya::API->albumTracksAll($albumId,
+		sub {
+			my ($tracks) = @_;
+			$cb->([ map { 'xmly://' . $_->{id} } @$tracks ]);
+		},
+		sub {
+			$cb->([]);
+		},
+	);
+
+	return;
+}
+
 sub scanUrl {
 	my ($class, $url, $args) = @_;
 

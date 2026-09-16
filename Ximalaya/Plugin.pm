@@ -92,16 +92,6 @@ sub initPlugin {
 		\&albumFeedHandler,
 	);
 
-	# 0.1.33: whole-album playlist route. Played as a URL (one click on the
-	# feed's play-whole-album row) LMS expands the m3u into the full ordered
-	# xmly:// track list - the remote equivalent of the local
-	# "playlist play db:album.id=N" whole-album enqueue. The .m3u extension
-	# keeps LMS's URL type detection on the playlist path.
-	Slim::Web::Pages->addPageFunction(
-		qr{^plugins/Ximalaya/album-\d+\.m3u$},
-		\&albumM3uHandler,
-	);
-
 	$class->SUPER::initPlugin(
 		feed => \&handleFeed,
 		tag  => 'ximalaya',
@@ -217,56 +207,6 @@ sub _albumFeedUrl {
 	return $base . '/plugins/Ximalaya/albumfeed.html?album=' . $albumId;
 }
 
-# 0.1.33: absolute whole-album playlist URL (same absolute rationale as the
-# feed URL above). LMS expands it into the ordered xmly:// track list.
-sub _album_m3u_url {
-	my ($albumId) = @_;
-	my $base = eval { require Slim::Utils::Network; Slim::Utils::Network::serverURL() };
-	$base = 'http://127.0.0.1:9000' unless $base;
-	$base =~ s{/+$}{};
-	return $base . '/plugins/Ximalaya/album-' . $albumId . '.m3u';
-}
-
-# 0.1.33: the whole-album playlist. albumTracksAll chains the three list
-# tiers (1h in-memory cache), we emit a plain M3U of xmly:// track URLs;
-# LMS enqueues them all on play and resolves each lazily at its turn, so
-# one click queues the entire album for sequential playback.
-sub albumM3uHandler {
-	my ($client, $params, $callback, $httpClient, $response) = @_;
-
-	my ($albumId) = ($params->{path} || '') =~ /album-(\d+)\.m3u$/;
-	$albumId ||= '';
-
-	my $emit = sub {
-		my ($body) = @_;
-		$response->content_type('audio/x-mpegurl');
-		$callback->($client, $params, \$body, $httpClient, $response);
-		return;
-	};
-
-	unless ($albumId) {
-		$emit->("#EXTM3U\n");
-		return;
-	}
-
-	Plugins::Ximalaya::API->albumTracksAll($albumId,
-		sub {
-			my ($tracks) = @_;
-			my @lines = ('#EXTM3U');
-			for my $t (@$tracks) {
-				next unless defined $t->{id} && length $t->{id};
-				my $title = $t->{title} // '';
-				$title =~ s/[\r\n]+/ /g;
-				push @lines, '#EXTINF:-1,' . $title, 'xmly://' . $t->{id};
-			}
-			$emit->(join("\n", @lines) . "\n");
-		},
-		sub { $emit->("#EXTM3U\n") },
-	);
-
-	return;
-}
-
 sub albumItem {
 	my ($album) = @_;
 	my $name = $album->{title} // "Album $album->{id}";
@@ -281,12 +221,20 @@ sub albumItem {
 	# (0.1.29; the earlier xmly://album/<id> shape was a dead bookmark).
 	# One place here covers EVERY album entry point (search, ranks, catalog
 	# browse, my albums itself).
+	#
+	# 0.1.34: whole-album play on the row itself (the Daphile equivalent of
+	# the local album row's play button). 'play' gives the row the same
+	# play/add controls the local library album rows have; the URL is
+	# xmly://album/<id>, which ProtocolHandler::explodePlaylist expands into
+	# the full ordered track list (the native mechanism LMS uses for
+	# Spotify albums). The row itself still DESCENDS into the track list.
 	return {
 		name        => $name,
 		image       => $album->{cover},
 		type        => 'link',
 		url         => \&albumHandler,
 		passthrough => [ $album->{id} ],
+		play            => 'xmly://album/' . $album->{id},
 		favorites_url   => _albumFeedUrl($album->{id}),
 		favorites_title => $name,
 		favorites_type  => 'link',
@@ -342,10 +290,29 @@ sub albumHandler {
 		my $n = 0;
 		my @items = map { trackItem(++$n + $offset, $_) } @$tracks;
 
+		# 0.1.34: trailing "play whole album" row at combined position
+		# $total (the first window that reaches past the last track renders
+		# it; the index<->track mapping of the earlier pages stays
+		# untouched - the 0.1.28 windowing lesson). explodePlaylist turns
+		# the xmly://album URL into the whole ordered list natively.
+		# Callers that decorate the list themselves (the favourites feed)
+		# pass no_play_row and get the plain track total back.
+		if (!$args->{no_play_row}
+			&& defined $total && $index <= $total && $index + $quantity > $total && @items) {
+			push @items, {
+				name => cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL'),
+				type => 'audio',
+				play => 'xmly://album/' . $albumId,
+				($tracks->[0] && $tracks->[0]->{cover}
+					? (image => $tracks->[0]->{cover})
+					: ()),
+			};
+		}
+
 		$cb->({
 			items  => \@items,
 			offset => $offset,
-			(defined $total ? (total => $total) : ()),
+			(defined $total ? (total => $total + ($args->{no_play_row} ? 0 : 1)) : ()),
 		});
 	};
 	my $fail = sub {
@@ -595,14 +562,14 @@ sub albumFeedHandler {
 		sub {
 			my ($feed) = @_;
 			my $items = $feed->{items} || [];
-
 			# navigation rows. Play-whole-album sits on top; next-page and
 			# jump-to-page close the page. The nav rows reuse the first
 			# cover of this batch so they do not render bare in cover-aware
 			# skins. The jump row embeds the server total into its URL
 			# (mode=pages layer above) so flipping to it costs zero API
-			# calls; the play row points at the m3u route which expands to
-			# the FULL ordered album (one click = whole album in the queue).
+			# calls. The play row's xmly://album URL is expanded into the
+			# FULL ordered album by ProtocolHandler::explodePlaylist (one
+			# click = whole album in the queue).
 			my $total = $feed->{total};
 			my $have  = ($feed->{offset} || 0) + scalar @$items;
 			my ($cover) = map { $_->{image} || () } @$items;
@@ -612,7 +579,7 @@ sub albumFeedHandler {
 				unshift @$items, {
 					name  => $name,
 					type  => 'audio',
-					play  => _album_m3u_url($albumId),
+					play  => 'xmly://album/' . $albumId,
 					image => $cover,
 				};
 			}
@@ -635,7 +602,10 @@ sub albumFeedHandler {
 			}
 			$finish->($items);
 		},
-		{ quantity => $width, index => ($page - 1) * $width },
+		# no_play_row: this feed adds its OWN leading play-all row (with
+		# count + cover) - the handler's trailing row and the +1 total are
+		# for the menu track list only
+		{ quantity => $width, index => ($page - 1) * $width, no_play_row => 1 },
 		$albumId,
 	);
 
