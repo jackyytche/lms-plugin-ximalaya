@@ -235,6 +235,17 @@ sub albumItem {
 	# (SlimBrowser _newWindowSpec: item.window.menuStyle 'album' = the same
 	# menu style the local album view / current-playlist album list use).
 	# Daphile skins decide what chrome they paint for that style.
+	#
+	# 0.1.37: on_select=play makes the row a TOUCH-TO-PLAY item (XMLBrowser
+	# touchToPlay(): type audio OR on_select=play -> the item's jive params
+	# carry touchToPlay, exactly like TuneIn station rows). Daphile renders
+	# those with its big-artwork play/add page - the same page a radio
+	# station gets - and the page's play button runs this row's play url
+	# (xmly://album/<id> -> explodePlaylist = the whole album). The descend
+	# action stays in the protocol, so the track list remains reachable
+	# through the row's context menu ("more"). Track rows already carry
+	# touchToPlay (type=audio) - tapping a track shows the same style of
+	# preview for the single track.
 	return {
 		name        => $name,
 		image       => $album->{cover},
@@ -242,6 +253,7 @@ sub albumItem {
 		url         => \&albumHandler,
 		passthrough => [ $album->{id} ],
 		play            => 'xmly://album/' . $album->{id},
+		on_select       => 'play',
 		favorites_url   => _albumFeedUrl($album->{id}),
 		favorites_title => $name,
 		favorites_type  => 'link',

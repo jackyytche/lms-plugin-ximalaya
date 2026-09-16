@@ -1181,6 +1181,8 @@ close $fh;
 				$it->{jive} && ref $it->{jive}{window} eq 'HASH'
 				&& ($it->{jive}{window}{menuStyle} || '') eq 'album'
 				&& ($it->{jive}{window}{'icon-id'} || '') eq 'https://c/1');
+			check('albumItem: on_select=play -> touchToPlay item like TuneIn stations (0.1.37)',
+				($it->{on_select} || '') eq 'play');
 		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed
