@@ -769,16 +769,18 @@ sub _xml_escape {
 # feed page must never carry MORE items than the UI page width, or the
 # overflow becomes a phantom page holding only the next-page row (the
 # 0.1.29 bug: 50 tracks + 1 next-page row = 51 items vs 50 per page ->
-# "page 2 shows nothing but next page"). Width = itemsPerPage - 3 (room
-# for the 0.1.33 play-whole-album row, the next-page row AND the 0.1.32
-# jump-to-page row), capped at PC_SHOW_MAX (the API page width).
-# itemsPerPage is the same server preference the UI uses (pageInfo falls
-# back to preferences('server')->get('itemsPerPage'); Daphile default 50).
+# "page 2 shows nothing but next page"). Width = itemsPerPage - 2 (room
+# for the next-page row AND the jump-to-page row; the play-all slot that
+# 0.1.33/0.1.43 reserved is gone since 0.1.44 - the shell header's own
+# play button plays the album), capped at PC_SHOW_MAX (the API page
+# width). itemsPerPage is the same server preference the UI uses
+# (pageInfo falls back to preferences('server')->get('itemsPerPage');
+# Daphile default 50).
 sub _feed_page_width {
 	my $pp = eval { preferences('server')->get('itemsPerPage') };
 	$pp = 50 unless $pp && $pp =~ /^\d+$/ && $pp >= 4;    # garbage/tiny -> Daphile default
 	$pp = 500 if $pp > 500;                               # paranoia clamp
-	my $w = $pp - 3;
+	my $w = $pp - 2;
 	$w = 1             if $w < 1;
 	$w = PC_SHOW_MAX() if $w > PC_SHOW_MAX();
 	return $w;
@@ -809,10 +811,12 @@ sub albumFeedHandler {
 	my $albumId = ($params->{album} || '') =~ /^(\d+)$/ ? $1 : '';
 	my $page    = (($params->{page} || 1) =~ /^(\d+)$/ ? $1 : 1) || 1;
 	$page = 1 if $page < 1;
-	# 0.1.43: two slots reserved for the ALBUM/ARTIST label rows inside the
-	# shell (labels appear whenever album/simple succeeds); the whole shell
-	# content - labels + play-all + tracks + next + jump - must stay within
-	# ONE ui page. The same width feeds the pages-layer ceil math.
+	# In-shell chrome budget: 2 slots for the ALBUM/ARTIST label rows
+	# (labels appear whenever album/simple succeeds); the whole shell
+	# content - labels + tracks + next + jump - must stay within ONE ui
+	# page. The same width feeds the pages-layer ceil math. (0.1.43
+	# reserved a third slot for the leading play-all row - removed in
+	# 0.1.44, the shell row's own header play button plays the album.)
 	my $width = _feed_page_width() - 2;
 
 	my $finish = sub {
@@ -937,28 +941,18 @@ sub albumFeedHandler {
 			sub {
 				my ($feed) = @_;
 				my $items = $feed->{items} || [];
-				# navigation rows. Play-whole-album sits on top; next-page
-				# and jump-to-page close the page. The nav rows reuse the
-				# first cover of this batch so they do not render bare in
-				# cover-aware skins. The jump row embeds the server total
-				# into its URL (mode=pages layer above) so flipping to it
-				# costs zero API calls. The play row's xmly://album URL is
-				# expanded into the FULL ordered album by
-				# ProtocolHandler::explodePlaylist (one click = whole album
-				# in the queue).
 				my $total = $feed->{total};
 				my $have  = ($feed->{offset} || 0) + scalar @$items;
 				my ($cover) = map { $_->{image} || () } @$items;
-				if (scalar @$items) {
-					my $name = cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL');
-					$name .= " ($total)" if defined $total && $total =~ /^\d+$/;
-					unshift @$items, {
-						name  => $name,
-						type  => 'audio',
-						play  => 'xmly://album/' . $albumId,
-						image => $cover,
-					};
-				}
+				# Navigation rows. 0.1.44: the leading play-whole-album row
+				# is GONE - the shell row's own play (songinfo header play
+				# button = whole album) already covers it, and the user
+				# asked for the redundant row to go. Next-page and
+				# jump-to-page close the page; they reuse the first cover
+				# of this batch so they do not render bare in cover-aware
+				# skins. The jump row embeds the server total into its URL
+				# (mode=pages layer above) so flipping to it costs zero API
+				# calls.
 				if (defined $total && $have < $total && scalar @$items) {
 					push @$items, {
 						name  => cstring($client, 'PLUGIN_XIMALAYA_NEXT_PAGE'),
@@ -978,9 +972,9 @@ sub albumFeedHandler {
 				}
 				$finish->($items, $meta, 1);
 			},
-			# no_play_row: this feed adds its OWN leading play-all row (with
-			# count + cover) - the handler's trailing row and the +1 total
-			# are for the menu track list only
+			# no_play_row: the menu track list keeps its trailing play-all
+			# row (+1 total); this feed never renders it - since 0.1.44 it
+			# has NO play-all row at all (the shell header plays the album)
 			{ quantity => $width, index => ($page - 1) * $width, no_play_row => 1 },
 			$albumId,
 		);

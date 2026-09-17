@@ -744,6 +744,53 @@ close $fh;
 				$last && $last->[0] eq 'xmly://track/flac2' && $last->[1]{ct} eq 'audio/flac'
 				&& $song->streamUrl eq 'http://cdn/a.flac?t=1');
 		}
+
+		# 0.1.44: enqueue-time metadata publication + the getMetadataFor
+		# queue fallback. The status query calls getMetadataFor for EVERY
+		# queued row; without these, not-yet-played playlist rows rendered
+		# blank (no title, no artwork, duration 0).
+		{
+			Slim::Music::Info::reset_remote_meta();
+			Slim::Schema::clear_rows();
+			Slim::Utils::Cache::clear_store();
+
+			Plugins::Ximalaya::ProtocolHandler->_publish_queue_metadata([
+				{ id => 101, title => 'ep1', paid => 0,
+				  cover => 'https://c/101.jpg', duration => 600 },
+				{ id => 102, title => '?', paid => 0, cover => '', duration => 0 },
+			]);
+			my $rm = Slim::Music::Info::remote_meta();
+			check('handler: _publish_queue_metadata writes title/secs/cover, skips placeholder-only rows',
+				@$rm == 1 && $rm->[0][0] eq 'xmly://101'
+				&& $rm->[0][1]{title} eq 'ep1' && $rm->[0][1]{secs} == 600
+				&& $rm->[0][1]{cover} eq 'https://c/101.jpg');
+
+			# the stub Info mirrors the real persistence: row + remote_image_
+			check('handler: publication persists into the track row + remote_image cache',
+				Slim::Schema->get_row('xmly://101')->{title} eq 'ep1'
+				&& Slim::Schema->get_row('xmly://101')->{secs} == 600
+				&& Slim::Utils::Cache->new->get('remote_image_xmly://101') eq 'https://c/101.jpg');
+
+			my $q = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://101');
+			check('handler: getMetadataFor queue fallback rebuilds row + cached cover (no type until played)',
+				$q && $q->{title} eq 'ep1' && $q->{duration} == 600
+				&& $q->{cover} eq 'https://c/101.jpg' && !exists $q->{type});
+
+			my $qb = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://never-published');
+			check('handler: queue fallback for a never-published url stays empty',
+				$qb && !scalar keys %$qb);
+
+			# play-time publication still wins over the queue fallback
+			Plugins::Ximalaya::ProtocolHandler->cache_metadata('xmly://101', {
+				title => 'ep1', cover => 'https://c/101.jpg',
+				duration => 600, bitrate => 128000, quality => 'mp3',
+			});
+			my $p = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://101');
+			check('handler: resolve-time metadata still takes precedence over the fallback',
+				$p && $p->{type} eq 'MP3 128kbps' && $p->{bitrate} eq '128kbps CBR');
+			Slim::Schema::clear_rows();
+			Slim::Utils::Cache::clear_store();
+		}
 	}
 }
 
@@ -758,6 +805,8 @@ close $fh;
 		&& $tracks->[0]{paid} == 1 && $tracks->[1]{paid} == 0);
 	check('mobile: http cover upgraded to https',
 		$tracks->[0]{cover} eq 'https://imagev2.xmcdn.com/storages/019c-audiofreehighqps/C7/E1/GKwRIasMxSA5AA.jpg');
+	check('mobile: real duration carried (0.1.44 queue publication uses it)',
+		$tracks->[0]{duration} == 624 && $tracks->[1]{duration} == 600);
 	($tracks, $total, $err) = $api->_parse_mobile_tracks($fx->{mobileEmpty});
 	check('mobile: empty list (free album) -> (undef, undef, empty)',
 		!defined $tracks && !defined $total && $err eq 'empty');
@@ -1058,7 +1107,7 @@ close $fh;
 		check('feed: songinfo header labels (ALBUM/ARTIST outlines, xml-escaped) precede the rows',
 			$body =~ m{\Q<outline text="Fav A&amp;lbum" type="text" label="ALBUM"/>\E}
 			&& $body =~ m{\Q<outline text="Fav Host" type="text" label="ARTIST"/>\E}
-			&& index($body, 'label="ALBUM"') < index($body, 'PLUGIN_XIMALAYA_PLAY_ALL'));
+			&& index($body, 'label="ALBUM"') < index($body, 'PLUGIN_XIMALAYA_NEXT_PAGE'));
 		check('feed: nested playlist shell row carries play (-> feed-level playUrl = songinfo'
 			. ' play/add = whole album) + upsized cover (-> feed-level image = header artwork)',
 			$body =~ m{\Q<outline text="Fav A&amp;lbum" type="playlist" play="xmly://album/30816438"\E}
@@ -1069,8 +1118,8 @@ close $fh;
 			$body !~ /duration=/ && $body !~ /playall=/);
 		check('feed: audio row with escaped title + xmly play url',
 			$body =~ m{\Q<outline text="[VIP] 1. T&amp;T &lt;feat&gt;" URL="xmly://759074956" type="audio"/>\E});
-		check('feed: play-all row present for a single-track album too',
-			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (2)" URL="xmly://album/30816438" type="audio"/>\E});
+		check('feed: NO play-all row anywhere (0.1.44: the shell header play button covers the whole album)',
+			$body !~ /PLUGIN_XIMALAYA_PLAY_ALL/);
 		check('feed: next-page link back at the route with escaped &page',
 			$body =~ m{\QURL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=30816438&amp;page=2" type="link"\E});
 
@@ -1103,14 +1152,15 @@ close $fh;
 			$body !~ /mode=pages/);
 	}
 
-	# 0.1.31 ghost-page fix + 0.1.32 jump-to-page row + 0.1.33 play-all row.
+	# 0.1.31 ghost-page fix + 0.1.32 jump-to-page row + 0.1.44 width change.
 	# The web UI slices a fetched feed per page (Slim::Web::XMLBrowser caches
 	# the whole feed; Pages::Common::pageInfo slices; no re-fetch), so a feed
-	# page must never exceed the UI page width: width = itemsPerPage - 3 ->
-	# play-all row + 47 tracks + next-page row + jump-to-page row = 50
-	# outlines = exactly ONE ui page (was 50+1=51 -> phantom "page 2" holding
-	# only the next-page row).
-	# 0.1.43: everything now lives INSIDE one nested playlist shell outline
+	# page must never exceed the UI page width: width = itemsPerPage - 2
+	# (next-page + jump rows) - 2 (label slots) = 46 -> 46 tracks + next +
+	# jump + 2 labels = 50 in-shell outlines = exactly ONE ui page (the
+	# leading play-all row that 0.1.33-0.1.43 spent a slot on is gone - the
+	# shell header's own play button plays the album; user request 0.1.44).
+	# 0.1.43: everything lives INSIDE one nested playlist shell outline
 	# (51 outline tags total) - the shell is not part of the second hop's
 	# list, so the in-shell content is still exactly one UI page.
 	{
@@ -1131,16 +1181,17 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 1 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		my $rows = () = $body =~ /<outline /g;
-		check('feed: shell + 2 labels + play-all + 45 tracks + next + jump = 51 outline tags,'
-			. ' in-shell content still one UI page (width 47-2 for the label slots)',
-			$rows == 51 && $sizes[0] == 45 && $pages[0] == 1);
+		check('feed: shell + 2 labels + 46 tracks + next + jump = 51 outline tags,'
+			. ' in-shell content still one UI page (width 48-2 for the label slots)',
+			$rows == 51 && $sizes[0] == 46 && $pages[0] == 1);
 		check('feed: shell row = album card (cover upsized, play = whole album)',
 			$body =~ m{\Q<outline text="Fav Album" type="playlist" play="xmly://album/777" image="https://c/777.jpg">\E});
-		check('feed: play-all row on top carries xmly://album play url + batch cover',
-			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_PLAY_ALL (100)" URL="xmly://album/777" type="audio" image="https://img/1"/>\E});
-		check('feed: page-1 numbering 1..45, audio rows carry image cover attr',
-			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="45. t45"\E/
-			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/45"\E});
+		check('feed: no play-all row; tracks start right after the label rows (0.1.44)',
+			$body !~ /PLUGIN_XIMALAYA_PLAY_ALL/
+			&& $body =~ m{\Qlabel="ARTIST"/>\E\n\Q<outline text="1. t1"\E});
+		check('feed: page-1 numbering 1..46, audio rows carry image cover attr',
+			$body =~ /\Qtext="1. t1"\E/ && $body =~ /\Qtext="46. t46"\E/
+			&& $body =~ m{\Qimage="https://img/1"\E} && $body =~ m{\Qimage="https://img/46"\E});
 		check('feed: next-page row carries first-batch cover + page=2 url',
 			$body =~ m{\Q<outline text="PLUGIN_XIMALAYA_NEXT_PAGE" URL="http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777&amp;page=2" type="link" image="https://img/1"/>\E});
 		check('feed: jump-to-page row embeds total for the zero-API page list',
@@ -1149,9 +1200,9 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '777', page => 2 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		$rows = () = $body =~ /<outline /g;
-		check('feed: page=2 keeps offset math (titles numbered 46..90) and still one page',
-			$rows == 51 && $pages[1] == 2 && $sizes[1] == 45
-			&& $body =~ /\Qtext="46. t1"\E/ && $body =~ /\Qtext="90. t45"\E/
+		check('feed: page=2 keeps offset math (titles numbered 47..92) and still one page',
+			$rows == 51 && $pages[1] == 2 && $sizes[1] == 46
+			&& $body =~ /\Qtext="47. t1"\E/ && $body =~ /\Qtext="92. t46"\E/
 			&& $body =~ /&amp;page=3/);
 	}
 
@@ -1176,18 +1227,18 @@ close $fh;
 		check('feed: pages layer names carry token (format applied in prod strings)',
 			($body =~ m{text="(PLUGIN_XIMALAYA_PAGE_OF)"} ? $1 : '') eq 'PLUGIN_XIMALAYA_PAGE_OF');
 
-		# ceil edge: exactly 2 full pages vs one track over (width 45 = 47-2
-		# label slots since 0.1.43)
+		# ceil edge: exactly 2 full pages vs one track over (width 46 = 48-2
+		# label slots; the play-all slot went away with 0.1.44)
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
-			{ album => '777', mode => 'pages', total => '90' },
+			{ album => '777', mode => 'pages', total => '92' },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
-		my $rows90 = () = $body =~ /<outline /g;
+		my $rows92 = () = $body =~ /<outline /g;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
-			{ album => '777', mode => 'pages', total => '91' },
+			{ album => '777', mode => 'pages', total => '93' },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
-		my $rows91 = () = $body =~ /<outline /g;
-		check('feed: pages layer ceil edges (90 -> 2 pages, 91 -> 3 pages)',
-			$rows90 == 2 && $rows91 == 3);
+		my $rows93 = () = $body =~ /<outline /g;
+		check('feed: pages layer ceil edges (92 -> 2 pages, 93 -> 3 pages)',
+			$rows92 == 2 && $rows93 == 3);
 
 		# missing/garbage total -> bare OPML, no rows
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef,
@@ -1198,25 +1249,25 @@ close $fh;
 	}
 
 	# width helper: follows itemsPerPage, clamped to the API cap, garbage-
-	# proof (0.1.31; 0.1.32 keeps TWO rows worth of room; 0.1.33 adds the
-	# play-all row -> THREE)
+	# proof (0.1.31; 0.1.32/0.1.33 kept TWO+ONE rows of room; 0.1.44 retires
+	# the play-all slot -> TWO)
 	{
 		my $srv = preferences('server');
 		$srv->set('itemsPerPage', 25);
-		check('feed: width follows itemsPerPage=25 -> 22',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 22);
+		check('feed: width follows itemsPerPage=25 -> 23',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 23);
 		$srv->set('itemsPerPage', 200);
 		check('feed: width capped at PC_SHOW_MAX for huge itemsPerPage',
 			Plugins::Ximalaya::Plugin::_feed_page_width() == Plugins::Ximalaya::API::PC_SHOW_MAX());
 		$srv->set('itemsPerPage', 1);
-		check('feed: pathological itemsPerPage=1 falls back to default 50 -> 47',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 47);
+		check('feed: pathological itemsPerPage=1 falls back to default 50 -> 48',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 48);
 		$srv->set('itemsPerPage', 'abc');
-		check('feed: non-numeric itemsPerPage falls back to default 50 -> 47',
-			Plugins::Ximalaya::Plugin::_feed_page_width() == 47);
+		check('feed: non-numeric itemsPerPage falls back to default 50 -> 48',
+			Plugins::Ximalaya::Plugin::_feed_page_width() == 48);
 
-		# end-to-end at itemsPerPage=25: play-all + 22 tracks + next + jump
-		# = 25 rows
+		# end-to-end at itemsPerPage=25: 21 tracks + next + jump = 23 in-shell
+		# rows + shell = 24 tags (labels need album/simple -> absent here)
 		$srv->set('itemsPerPage', 25);
 		local *Plugins::Ximalaya::API::albumTracksMobile = sub {
 			my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
@@ -1228,8 +1279,8 @@ close $fh;
 		Plugins::Ximalaya::Plugin::albumFeedHandler(undef, { album => '888', page => 1 },
 			sub { (undef, undef, my $b) = @_; $body = $$b; }, undef, $resp);
 		my $rows = () = $body =~ /<outline /g;
-		check('feed: itemsPerPage=25 -> shell + play-all + 20 tracks + next + jump = 24 tags',
-			$rows == 24 && $body =~ /\Qtext="20. u20"\E/
+		check('feed: itemsPerPage=25 -> shell + 21 tracks + next + jump = 24 tags',
+			$rows == 24 && $body =~ /\Qtext="21. u21"\E/
 			&& $body =~ /&amp;mode=pages&amp;total=100/);
 
 		$srv->set('itemsPerPage', 50);
@@ -1393,6 +1444,7 @@ close $fh;
 		# album mechanism); plain track URLs explode to themselves
 		{
 			Plugins::Ximalaya::API->_clear_alltracks_cache();
+			Slim::Music::Info::reset_remote_meta();
 			local *Plugins::Ximalaya::API::albumTracksMobile = sub {
 				my ($class, $aid, $page, $size, $cb, $ecb) = @_;
 				$cb->([ { id => 21, title => 'r1', paid => 0, cover => '' },
@@ -1403,6 +1455,13 @@ close $fh;
 				sub { $urls = shift });
 			check('explode: album URL -> ordered xmly:// track list',
 				ref $urls eq 'ARRAY' && join('|', @$urls) eq 'xmly://21|xmly://22');
+
+			# 0.1.44: every exploded track gets its display metadata published
+			# BEFORE the queue is filled - no more blank playlist rows
+			my $rm = Slim::Music::Info::remote_meta();
+			check('explode: enqueue-time metadata publication for every track (0.1.44)',
+				(grep { $_->[0] eq 'xmly://21' && $_->[1]{title} eq 'r1' } @$rm)
+				&& (grep { $_->[0] eq 'xmly://22' && $_->[1]{title} eq 'r2' } @$rm));
 
 			my $self2;
 			Plugins::Ximalaya::ProtocolHandler->explodePlaylist(undef, 'xmly://759074956',

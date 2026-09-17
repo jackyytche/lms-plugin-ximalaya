@@ -798,6 +798,10 @@ sub _parse_mobile_tracks {
 			title => $t->{title} // '?',
 			paid  => $t->{isPaid} // 0,
 			cover => $class->_norm_cover($t->{coverSmall} // $t->{coverMiddle} // $t->{coverLarge}),
+			# 0.1.44: the mobile tier carries durations too - the queue
+			# publication (ProtocolHandler::_publish_queue_metadata) uses
+			# them so playlist rows show real durations before playback.
+			duration => $t->{duration} // 0,
 		}
 	} @$list;
 

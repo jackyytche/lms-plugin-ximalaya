@@ -16,6 +16,9 @@ use base qw(Slim::Player::Protocols::HTTPS);
 
 use Slim::Utils::Log;
 use Slim::Music::Info;
+use Slim::Schema;        # 0.1.44: queue fallback reads the track row
+use Slim::Utils::Cache;  # 0.1.44: queue fallback reads remote_image_
+use Scalar::Util qw(blessed);
 
 use Plugins::Ximalaya::API;
 
@@ -61,6 +64,16 @@ sub explodePlaylist {
 	Plugins::Ximalaya::API->albumTracksAll($albumId,
 		sub {
 			my ($tracks) = @_;
+
+			# 0.1.44: publish display metadata for the whole list BEFORE the
+			# URLs enter the playlist. The status query asks getMetadataFor
+			# for EVERY queued row (Slim::Control::Queries L5726-5733), and
+			# without an enqueue-time publication the not-yet-played rows
+			# rendered completely blank (no title, no artwork, duration 0)
+			# until their turn came. The list data is already in hand - zero
+			# extra API calls.
+			$class->_publish_queue_metadata($tracks);
+
 			$cb->([ map { 'xmly://' . $_->{id} } @$tracks ]);
 		},
 		sub {
@@ -192,18 +205,69 @@ sub cache_metadata {
 # Slim::Player::Protocols::HTTP::getMetadataFor delegates here when the
 # handler implements it (see HTTP.pm): the returned hash becomes the track's
 # remoteMeta verbatim - type carries the rate for Daphile's format display.
+# 0.1.44: the status query calls this for EVERY queued xmly:// row (Slim::
+# Control::Queries L5726-5733), and the result OVERRIDES the track row -
+# including duration, which L5741 force-sets to remoteMeta->{d} = 0 when we
+# returned the old empty hash. That {} is exactly why not-yet-played rows
+# in the queue rendered blank. On a %METADATA miss (never resolved, or
+# evicted / post-restart) rebuild what the enqueue-time and play-time
+# publications left behind: TITLE/SECS committed to the track row and the
+# cover in the remote_image_ cache (30 days - both survive restarts).
 sub getMetadataFor {
 	my ($class, $client, $url) = @_;
 
-	my $m = $METADATA{$url} or return {};
+	if (my $m = $METADATA{$url}) {
+		return {
+			title    => $m->{title},
+			type     => $m->{type},
+			bitrate  => $m->{bitrate},
+			duration => $m->{duration},
+			cover    => $m->{cover},
+		};
+	}
 
-	return {
-		title    => $m->{title},
-		type     => $m->{type},
-		bitrate  => $m->{bitrate},
-		duration => $m->{duration},
-		cover    => $m->{cover},
-	};
+	my $meta = {};
+
+	if (my $track = Slim::Schema->objectForUrl({ url => $url })) {
+		if (blessed($track)) {
+			$meta->{title}    = $track->title     if $track->title;
+			$meta->{duration} = $track->secs + 0  if $track->secs;
+		}
+	}
+
+	my $cover = Slim::Utils::Cache->new->get("remote_image_$url");
+	$meta->{cover} = $cover if defined $cover && $cover ne '';
+
+	return scalar keys %$meta ? $meta : {};
+}
+
+# 0.1.44: enqueue-time metadata publication, called from explodePlaylist.
+# albumTracksAll already carries title/duration/cover for every track, so
+# publishing the whole list costs zero API calls. Slim::Music::Info::
+# setRemoteMetadata commits TITLE/SECS into the track row (survives
+# restarts) and stores the cover in the remote_image_ cache (30 days,
+# Info.pm L484-489) - getMetadataFor's queue fallback reads both back for
+# tracks that have not been resolved yet. No ct/bitrate here: the codec is
+# only known at resolve time, and the play-time publication overwrites
+# this entry with the full data anyway.
+sub _publish_queue_metadata {
+	my ($class, $tracks) = @_;
+
+	for my $t (@$tracks) {
+		next unless $t && $t->{id};
+
+		my %meta;
+		$meta{title} = $t->{title}
+			if defined $t->{title} && $t->{title} ne '' && $t->{title} ne '?';
+		$meta{secs}  = $t->{duration} if $t->{duration} && $t->{duration} > 0;
+		$meta{cover} = $t->{cover}    if defined $t->{cover} && $t->{cover} ne '';
+
+		next unless scalar keys %meta;
+
+		Slim::Music::Info::setRemoteMetadata('xmly://' . $t->{id}, \%meta);
+	}
+
+	return;
 }
 
 sub getNextTrack {
