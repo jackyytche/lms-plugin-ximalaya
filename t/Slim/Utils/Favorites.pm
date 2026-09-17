@@ -1,9 +1,14 @@
 # Slim::Utils::Favorites - offline stub for the plugin test suite.
 #
 # Minimal in-memory implementation of the API surface the plugin uses
-# (new / all / hasUrl / add / deleteUrl), mirroring the real module's
-# semantics closely enough for the my-albums merge tests:
-#   - all()      -> arrayref of { url, name, type, icon }
+# (new / all / hasUrl / add / deleteUrl). 0.1.46: all() now mirrors the
+# REAL OpmlFavorites::all semantics - it takes an optional type regex and
+# defaults to qr/audio|playlist/, SKIPPING entries whose type does not
+# match (the real module L285-296; folder recursion is not type-gated).
+# This matters: our web-UI album favourites are stored with type 'link',
+# so plugin code must call all(qr//) to see them - the stub previously
+# returned everything unfiltered and masked exactly this bug.
+#   - all(;$typeRE) -> arrayref of { url, name, type, icon }
 #   - hasUrl($u) -> 1 if stored (real module returns 1/0)
 #   - add($url, $title, $type, $parser, $fresh, $icon)
 #   - deleteUrl($url)
@@ -15,7 +20,7 @@ package Slim::Utils::Favorites;
 use strict;
 use warnings;
 
-my @STORE;
+my @STORE;    # rows: [ url, name, type, icon ]
 
 sub new {
 	my ($class, $client) = @_;
@@ -23,10 +28,13 @@ sub new {
 }
 
 sub all {
-	my ($self) = @_;
+	my ($self, $typeRE) = @_;
+	$typeRE ||= qr/audio|playlist/;    # real-module default (OpmlFavorites L285)
 	return [ map {
-		{ url => $_->[0], name => $_->[1], type => ($_->[2] || 'link'),
-		  icon => $_->[3] }
+		my $t = $_->[2] // 'link';
+		($t =~ /$typeRE/)
+			? { url => $_->[0], name => $_->[1], type => $t, icon => $_->[3] }
+			: ();
 	} @STORE ];
 }
 

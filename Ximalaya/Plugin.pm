@@ -112,6 +112,18 @@ sub initPlugin {
 		[ ['favorites'], ['changed'] ],
 	);
 
+	# 0.1.46: first-run migration - if the pref has NEVER been populated,
+	# import the ALBUM favourites already in the list once. They were
+	# invisible to the old render merge (all() type filter, see
+	# _on_favorites_changed), so users starring albums since 0.1.29 have
+	# them only in Daphile's favourites. Deliberately emptying the pref
+	# while keeping favourites WILL re-import on the next restart -
+	# documented tradeoff, revisit only if it bites.
+	if (!( $prefs->get('albums') || '' )) {
+		eval { _on_favorites_changed() };
+		$log->error("favsync: startup migration failed: $@") if $@;
+	}
+
 	return;
 }
 
@@ -1030,31 +1042,48 @@ sub _album_id_from_url {
 # other, independent copy. Errors degrade silently (no favorites module ->
 # no sync, same policy as the myAlbums merge).
 sub _on_favorites_changed {
+	# 0.1.46: all(qr//) - the REAL OpmlFavorites::all defaults to a
+	# qr/audio|playlist/ type filter (OpmlFavorites.pm L285), and web-UI
+	# favourites of our albums are stored with type 'link' (albumItem
+	# favorites_type => 'link'; XMLBrowser keeps it because favorites_type
+	# is set) - the default scan NEVER saw them, which is why neither the
+	# 0.1.29 render merge nor the 0.1.45 sync worked on the real server
+	# (device-verified 2026-09-17: favourites list shows our albums as
+	# type:"link"). qr// matches every type; folder recursion inside all()
+	# was never type-gated, so nested entries now surface too.
 	my $favs = eval {
 		require Slim::Utils::Favorites;
 		Slim::Utils::Favorites->new(undef);    # client ignored by the store
 	};
-	return unless $favs;
+	if (!$favs) {
+		$log->debug('favsync: no favorites module - skipped');
+		return;
+	}
 
-	my $items = eval { $favs->all } || [];
+	my $items = eval { $favs->all(qr//) } || [];
 
 	my $raw   = $prefs->get('albums') || '';
 	my @ids   = grep { /^\d+$/ } split /[\s,;]+/, $raw;
 	my %seen  = map { $_ => 1 } @ids;
 	my $added = 0;
+	my $found = 0;
 
 	for my $fi (@$items) {
 		my $id = _album_id_from_url($fi->{url});
 		next unless defined $id;
+		$found++;
 		next if $seen{$id}++;
 		push @ids, $id;
 		$added++;
 	}
 
-	return unless $added;
+	unless ($added) {
+		$log->debug("favsync: $found album favourite(s) scanned, nothing new to add");
+		return;
+	}
 
 	$prefs->set('albums', join("\n", @ids));
-	$log->info("Ximalaya: $added album(s) favourited -> synced into my albums");
+	$log->info("Ximalaya: $added album(s) favourited -> synced into my albums ($found album favourite(s) total)");
 
 	return;
 }
@@ -1080,7 +1109,9 @@ sub myAlbumsHandler {
 		Slim::Utils::Favorites->new($client);
 	};
 	if ($favs) {
-		my $items = eval { $favs->all } || [];
+		# 0.1.46: all(qr//) - see _on_favorites_changed; the default
+		# audio|playlist type filter hid our 'link'-typed album favourites
+		my $items = eval { $favs->all(qr//) } || [];
 		for my $fi (@$items) {
 			my $id = _album_id_from_url($fi->{url});
 			next unless defined $id;

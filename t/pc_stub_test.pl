@@ -1031,10 +1031,10 @@ close $fh;
 		$prefs->set('albums', "111\n222");
 
 		Slim::Utils::Favorites::set_store_rows(
-			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=333', 'Fav Album 333'],
-			['xmly://album/444', 'legacy bookmark 444'],
-			['xmly://album/111', 'dup of pref 111'],
-			['xmly://track/999', 'not an album - ignored'],
+			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=333', 'Fav Album 333', 'link'],
+			['xmly://album/444', 'legacy bookmark 444', 'audio'],
+			['xmly://album/111', 'dup of pref 111', 'link'],
+			['xmly://track/999', 'not an album - ignored', 'link'],
 		);
 		local *Plugins::Ximalaya::API::albumInfo = sub {
 			my ($class, $id, $cb, $ecb) = @_;
@@ -1060,32 +1060,40 @@ close $fh;
 
 	# 0.1.45: dual-write favourites - _on_favorites_changed appends album
 	# ids from the favourites store into the pref; track favourites stay out
+	# 0.1.46: rows carry EXPLICIT types - the real OpmlFavorites::all()
+	# defaults to a qr/audio|playlist/ filter and our web-UI album
+	# favourites are type 'link' (device-verified root cause), so the
+	# plugin must scan with all(qr//); the stub now mirrors that filter.
 	{
 		my $saved = $prefs->get('albums');
 		$prefs->set('albums', "555");
 
 		Slim::Utils::Favorites::set_store_rows(
-			['xmly://album/666', 'starred 666'],
-			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777', 'starred 777'],
-			['xmly://track/999', 'track favourite - must stay out'],
-			['http://example.com/radio', 'unrelated station'],
+			['xmly://album/666', 'starred 666 (web UI)', 'link'],
+			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777', 'starred 777 (web UI)', 'link'],
+			['xmly://album/888', 'cli-added 888', 'audio'],
+			['xmly://track/999', 'track favourite - must stay out', 'link'],
+			['http://example.com/radio', 'unrelated station', 'audio'],
 		);
+		check('favsync regression guard: stub all() default hides link rows (real OpmlFavorites semantics)',
+			@{ Slim::Utils::Favorites->new(undef)->all() } == 2
+			&& @{ Slim::Utils::Favorites->new(undef)->all(qr//) } == 5);
 		Plugins::Ximalaya::Plugin::_on_favorites_changed();
-		check('favsync: album favourites land in the pref, tracks/stations stay out',
-			$prefs->get('albums') =~ /^555\n666\n777$/);
+		check('favsync: album favourites (link AND audio types) land in the pref, tracks/stations stay out',
+			$prefs->get('albums') =~ /^555\n666\n777\n888$/);
 
 		# idempotent: a second change notification (any save re-fires) -> no dup
 		Plugins::Ximalaya::Plugin::_on_favorites_changed();
 		check('favsync: repeated change notifications do not duplicate ids',
-			$prefs->get('albums') =~ /^555\n666\n777$/);
+			$prefs->get('albums') =~ /^555\n666\n777\n888$/);
 
 		# un-favouriting does NOT remove from the pref (independent store)
 		Slim::Utils::Favorites::set_store_rows(
-			['xmly://track/999', 'track favourite - must stay out'],
+			['xmly://track/999', 'track favourite - must stay out', 'link'],
 		);
 		Plugins::Ximalaya::Plugin::_on_favorites_changed();
 		check('favsync: un-favouriting leaves the pref untouched (my albums is its own store)',
-			$prefs->get('albums') =~ /^555\n666\n777$/);
+			$prefs->get('albums') =~ /^555\n666\n777\n888$/);
 
 		check('favsync: _album_id_from_url recognises both album shapes only',
 			Plugins::Ximalaya::Plugin::_album_id_from_url('xmly://album/42') eq '42'
