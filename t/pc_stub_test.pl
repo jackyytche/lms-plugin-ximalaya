@@ -1057,6 +1057,46 @@ close $fh;
 		$prefs->set('albums', $saved);
 		Slim::Utils::Favorites::set_store_rows();
 	}
+
+	# 0.1.45: dual-write favourites - _on_favorites_changed appends album
+	# ids from the favourites store into the pref; track favourites stay out
+	{
+		my $saved = $prefs->get('albums');
+		$prefs->set('albums', "555");
+
+		Slim::Utils::Favorites::set_store_rows(
+			['xmly://album/666', 'starred 666'],
+			['http://192.0.2.1:9000/plugins/Ximalaya/albumfeed.html?album=777', 'starred 777'],
+			['xmly://track/999', 'track favourite - must stay out'],
+			['http://example.com/radio', 'unrelated station'],
+		);
+		Plugins::Ximalaya::Plugin::_on_favorites_changed();
+		check('favsync: album favourites land in the pref, tracks/stations stay out',
+			$prefs->get('albums') =~ /^555\n666\n777$/);
+
+		# idempotent: a second change notification (any save re-fires) -> no dup
+		Plugins::Ximalaya::Plugin::_on_favorites_changed();
+		check('favsync: repeated change notifications do not duplicate ids',
+			$prefs->get('albums') =~ /^555\n666\n777$/);
+
+		# un-favouriting does NOT remove from the pref (independent store)
+		Slim::Utils::Favorites::set_store_rows(
+			['xmly://track/999', 'track favourite - must stay out'],
+		);
+		Plugins::Ximalaya::Plugin::_on_favorites_changed();
+		check('favsync: un-favouriting leaves the pref untouched (my albums is its own store)',
+			$prefs->get('albums') =~ /^555\n666\n777$/);
+
+		check('favsync: _album_id_from_url recognises both album shapes only',
+			Plugins::Ximalaya::Plugin::_album_id_from_url('xmly://album/42') eq '42'
+			&& Plugins::Ximalaya::Plugin::_album_id_from_url('http://h/plugins/Ximalaya/albumfeed.html?album=43') eq '43'
+			&& !defined Plugins::Ximalaya::Plugin::_album_id_from_url('xmly://track/44')
+			&& !defined Plugins::Ximalaya::Plugin::_album_id_from_url('xmly://759074956')
+			&& !defined Plugins::Ximalaya::Plugin::_album_id_from_url(undef));
+
+		$prefs->set('albums', $saved);
+		Slim::Utils::Favorites::set_store_rows();
+	}
 }
 
 # ---------------------------------------------- album feed (starred) 0.1.29

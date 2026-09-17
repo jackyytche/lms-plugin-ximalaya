@@ -98,6 +98,20 @@ sub initPlugin {
 		menu => 'apps',
 	);
 
+	# 0.1.45: dual-write album favourites. The LMS/Daphile favourites list
+	# stays the primary store (albumfeed.html?album=N entries, 0.1.29); on
+	# EVERY favourites change we also sync ALBUM entries into the plugin
+	# pref 'albums', so a starred album lives in "my albums" independently
+	# of the favourites list. Track favourites (xmly://track/<id>) never
+	# match the album URL shapes and stay out of my albums - user
+	# requirement. subscribe() carries no dispatch-registration check, so
+	# load order against the Favorites plugin does not matter.
+	require Slim::Control::Request;
+	Slim::Control::Request::subscribe(
+		\&_on_favorites_changed,
+		[ ['favorites'], ['changed'] ],
+	);
+
 	return;
 }
 
@@ -987,6 +1001,64 @@ sub albumFeedHandler {
 
 # --------------------------------------------------------------- my albums
 
+# 0.1.45: the album URL shapes recognised across favourites handling -
+# the 0.1.29 starred-feed URL (albumfeed.html?album=N) and the 0.1.28
+# legacy bookmark (xmly://album/N). Returns the album id or undef.
+# Track URLs (xmly://track/<id>) deliberately do NOT match - single
+# episodes never enter "my albums" (user requirement).
+sub _album_id_from_url {
+	my ($u) = @_;
+	return undef unless defined $u;
+	if ($u =~ m{^xmly://album/(\d+)}) {
+		return $1;
+	}
+	if ($u =~ m{albumfeed\.html\?album=(\d+)}) {
+		return $1;
+	}
+	return undef;
+}
+
+# 0.1.45: dual-write favourites sync. Fired (via the request notification
+# queue - async, next idle loop) whenever the LMS favourites list was
+# saved: Slim::Plugin::Favorites::OpmlFavorites::save fires
+# ['favorites','changed'] on every add AND delete, whatever UI path issued
+# it (web favadd/favdel action L1002-1024, jive tile, CLI). We scan the
+# favourites (OpmlFavorites::all is recursive, folders included) and
+# append every ALBUM id missing from the pref 'albums'. Deleting a
+# favourite does NOT remove it from the pref: "my albums" is the plugin's
+# own persistent list (editable in settings), Daphile's favourites is the
+# other, independent copy. Errors degrade silently (no favorites module ->
+# no sync, same policy as the myAlbums merge).
+sub _on_favorites_changed {
+	my $favs = eval {
+		require Slim::Utils::Favorites;
+		Slim::Utils::Favorites->new(undef);    # client ignored by the store
+	};
+	return unless $favs;
+
+	my $items = eval { $favs->all } || [];
+
+	my $raw   = $prefs->get('albums') || '';
+	my @ids   = grep { /^\d+$/ } split /[\s,;]+/, $raw;
+	my %seen  = map { $_ => 1 } @ids;
+	my $added = 0;
+
+	for my $fi (@$items) {
+		my $id = _album_id_from_url($fi->{url});
+		next unless defined $id;
+		next if $seen{$id}++;
+		push @ids, $id;
+		$added++;
+	}
+
+	return unless $added;
+
+	$prefs->set('albums', join("\n", @ids));
+	$log->info("Ximalaya: $added album(s) favourited -> synced into my albums");
+
+	return;
+}
+
 sub myAlbumsHandler {
 	my ($client, $cb, $args) = @_;
 
@@ -996,6 +1068,9 @@ sub myAlbumsHandler {
 	# as xmly://album/<id> links (see albumItem). Dedup with the pref list
 	# first. A missing/unreadable Favorites module degrades silently to the
 	# pref-only list.
+	# 0.1.45: starring ALSO writes into the pref (_on_favorites_changed), so
+	# this merge is a safety net for entries starred before 0.1.45 and for
+	# the window between the favourites save and the async notification.
 	my $raw = $prefs->get('albums') || '';
 	my @ids = grep { /^\d+$/ } split /[\s,;]+/, $raw;
 	my %seen = map { $_ => 1 } @ids;
@@ -1007,11 +1082,9 @@ sub myAlbumsHandler {
 	if ($favs) {
 		my $items = eval { $favs->all } || [];
 		for my $fi (@$items) {
-			my $u = $fi->{url} || '';
-			# 0.1.29 URL shape (albumfeed.html?album=N) + 0.1.28 legacy
-			# (xmly://album/N) - both merge into my albums
-			next unless ($u =~ m{^xmly://album/(\d+)} || $u =~ m{albumfeed\.html\?album=(\d+)});
-			push @ids, $1 unless $seen{$1}++;
+			my $id = _album_id_from_url($fi->{url});
+			next unless defined $id;
+			push @ids, $id unless $seen{$id}++;
 		}
 	}
 
