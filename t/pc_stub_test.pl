@@ -732,7 +732,10 @@ close $fh;
 				$s->{u} = $u if defined $u;
 				return $s->{u};
 			};
+			*XimaStubSong::master = sub { 'stubclient' };   # 0.1.48 notify target
 			Slim::Music::Info::reset_remote_meta();
+			Slim::Control::Request::clear_notifications();
+			Slim::Utils::Cache::clear_store();
 			Plugins::Ximalaya::ProtocolHandler->_apply_resolve($song, 'xmly://track/flac2', {
 				title => 'x', cover => 'https://imagev2.xmcdn.com/c.jpg',
 				duration => 300, bitrate => 1058000, quality => 'flac',
@@ -743,6 +746,36 @@ close $fh;
 			check('handler: _apply_resolve publishes audio/flac ct + swaps stream url',
 				$last && $last->[0] eq 'xmly://track/flac2' && $last->[1]{ct} eq 'audio/flac'
 				&& $song->streamUrl eq 'http://cdn/a.flac?t=1');
+
+			# 0.1.48: the resolve is asynchronous, so the status served while
+			# it was in flight carried no codec/rate and nothing told the
+			# clients when that changed - the now-playing tech line stayed
+			# empty until the user did something that forced a status push
+			# (device report: pressing PAUSE made it appear immediately).
+			# The core's own signal for late stream metadata is
+			# 'playlist newmetadata' (SqueezePlayDirect::parseMetadata L107).
+			my $notifs = Slim::Control::Request::notifications();
+			check('0.1.48: resolve completion notifies playlist newmetadata (late-metadata signal)',
+				@$notifs == 1
+				&& $notifs->[0][0] eq 'stubclient'
+				&& join('|', @{ $notifs->[0][1] }) eq 'playlist|newmetadata');
+
+			# 0.1.48: the codec/rate also go into the persistent cache, which is
+			# the only place that survives a restart (the track row keeps
+			# title/secs/cover, never the codec).
+			my $tech = Slim::Utils::Cache->new->get('xmly_meta_xmly://track/flac2');
+			check('0.1.48: resolve persists codec/rate for later processes',
+				$tech && $tech->{type} eq 'FLAC 1058kbps'
+				&& $tech->{bitrate} eq '1058kbps');
+
+			# and the queue fallback serves them on an in-process cache miss
+			# (fresh process / evicted entry) instead of an empty tech line
+			Slim::Schema::clear_rows();
+			Slim::Utils::Cache->new->set('xmly_meta_xmly://track/flac3',
+				{ type => 'MP3 128kbps', bitrate => '128kbps CBR' }, '30 days');
+			my $fb = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://track/flac3');
+			check('0.1.48: queue fallback serves codec/rate from the persistent entry',
+				$fb && $fb->{type} eq 'MP3 128kbps' && $fb->{bitrate} eq '128kbps CBR');
 		}
 
 		# 0.1.44: enqueue-time metadata publication + the getMetadataFor

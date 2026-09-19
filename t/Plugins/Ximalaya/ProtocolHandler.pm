@@ -18,6 +18,7 @@ use Slim::Utils::Log;
 use Slim::Music::Info;
 use Slim::Schema;        # 0.1.44: queue fallback reads the track row
 use Slim::Utils::Cache;  # 0.1.44: queue fallback reads remote_image_
+use Slim::Control::Request;  # 0.1.48: late-metadata notification
 use Scalar::Util qw(blessed);
 
 use Plugins::Ximalaya::API;
@@ -177,27 +178,55 @@ sub new {
 # session, reset when it grows beyond a full album.
 my %METADATA;
 
+# 0.1.48: the two display strings for a resolved stream live in ONE place now -
+# the in-process cache and the persistent cache entry (below) must agree
+# character for character, since Daphile renders the codec/rate from them.
+sub _bitrate_string {
+	my ($kbps) = @_;
+	return '' unless $kbps;
+	# same CBR membership table as Slim::Music::Info (32..320)
+	my $suffix = ($kbps >= 32 && $kbps <= 320 && $kbps % 8 == 0) ? ' CBR' : '';
+	return "${kbps}kbps$suffix";
+}
+
+sub _type_string {
+	my ($codec, $kbps) = @_;
+	return $kbps ? "$codec ${kbps}kbps" : $codec;
+}
+
+sub _codec_for {
+	my ($info) = @_;
+	# 0.1.30: quality now carries the real codec hint (API _suffix_quality) -
+	# the ORIGIN tier streams .flac uploads at 1000+ kbps that were shown
+	# as AAC before.
+	my $q = ($info && $info->{quality}) || '';
+	return $q eq 'mp3' ? 'MP3' : $q eq 'flac' ? 'FLAC' : 'AAC';
+}
+
 sub cache_metadata {
 	my ($class, $url, $info) = @_;
 
 	%METADATA = () if keys %METADATA > 200;
 
 	my $kbps   = $info->{bitrate} ? int($info->{bitrate} / 1000) : 0;
-	# same CBR membership table as Slim::Music::Info (32..320)
-	my $suffix = ($kbps >= 32 && $kbps <= 320 && $kbps % 8 == 0) ? ' CBR' : '';
-	# 0.1.30: quality now carries the real codec hint (API _suffix_quality) -
-	# the ORIGIN tier streams .flac uploads at 1000+ kbps that were shown
-	# as AAC before.
-	my $q      = $info->{quality} || '';
-	my $codec  = $q eq 'mp3' ? 'MP3' : $q eq 'flac' ? 'FLAC' : 'AAC';
 
 	$METADATA{$url} = {
 		title    => $info->{title},
 		cover    => $info->{cover},
 		duration => $info->{duration},
-		bitrate  => $kbps ? "${kbps}kbps$suffix" : '',
-		type     => $kbps ? "$codec ${kbps}kbps" : $codec,
+		bitrate  => _bitrate_string($kbps),
+		type     => _type_string(_codec_for($info), $kbps),
 	};
+
+	# 0.1.48: keep the same two strings in the persistent cache. The in-process
+	# %METADATA is lost on restart (and flushed wholesale past 200 entries), and
+	# the codec/rate are the only fields the track row does not reliably carry -
+	# without this, a track played BEFORE the restart showed no tech info on its
+	# next play even though everything about it was already known.
+	Slim::Utils::Cache->new->set("xmly_meta_$url", {
+		type    => $METADATA{$url}{type},
+		bitrate => $METADATA{$url}{bitrate},
+	}, '30 days');
 
 	return 1;
 }
@@ -237,6 +266,18 @@ sub getMetadataFor {
 
 	my $cover = Slim::Utils::Cache->new->get("remote_image_$url");
 	$meta->{cover} = $cover if defined $cover && $cover ne '';
+
+	# 0.1.48: codec/rate from the persistent entry written at resolve time.
+	# The row cannot supply them, so before this a status query that missed the
+	# in-process cache (fresh process after a restart, evicted entry, or the
+	# moment before a re-resolve finishes) rendered the now-playing tech line
+	# EMPTY - the reported "sometimes no codec/bitrate until I reload the page".
+	# Deliberately still NOT part of the enqueue-time publication: the codec is
+	# unknown until the stream has actually been resolved.
+	if (my $tech = Slim::Utils::Cache->new->get("xmly_meta_$url")) {
+		$meta->{type}    = $tech->{type}    if $tech->{type};
+		$meta->{bitrate} = $tech->{bitrate} if $tech->{bitrate};
+	}
 
 	return scalar keys %$meta ? $meta : {};
 }
@@ -329,6 +370,25 @@ sub _apply_resolve {
 
 	# the resolved url is what actually gets streamed
 	$song->streamUrl($info->{url});
+
+	# 0.1.48: tell the clients the stream metadata has arrived. The resolve is
+	# asynchronous, so the status served while it was in flight had no
+	# codec/rate (getMetadataFor's queue fallback intentionally carries none),
+	# and a client only re-renders its now-playing line when the server pushes
+	# a fresh status. The pushes LMS does generate on its own are tied to
+	# playback notifications (play/open/jump/newsong), NOT to our resolve
+	# finishing - so a slow resolve left the tech line blank until the user
+	# reloaded the page. `playlist newmetadata` is the core's own signal for
+	# exactly this situation (Slim::Player::Protocols::SqueezePlayDirect::
+	# parseMetadata L107 fires it when an out-of-band metadata packet arrives
+	# mid-stream), and statusQuery_filter (Slim::Control::Queries L3785) lets
+	# it through to every subscribed status query, so the panel updates ~1.3s
+	# later (the filter's delay) with no user action.
+	if (blessed($song) && $song->can('master')) {
+		if (my $client = $song->master()) {
+			Slim::Control::Request::notifyFromArray($client, [ 'playlist', 'newmetadata' ]);
+		}
+	}
 
 	return;
 }
