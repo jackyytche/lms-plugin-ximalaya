@@ -1459,8 +1459,15 @@ close $fh;
 				$it->{jive} && ref $it->{jive}{window} eq 'HASH'
 				&& ($it->{jive}{window}{menuStyle} || '') eq 'album'
 				&& ($it->{jive}{window}{'icon-id'} || '') eq 'https://c/1');
-			check('albumItem: on_select=play -> touchToPlay item like TuneIn stations (0.1.37)',
-				($it->{on_select} || '') eq 'play');
+			# 0.1.53: on_select='play' is GONE. With the feed-level play/add
+			# actions removed (0.1.40) it made XMLBrowser set goAction='play'
+			# and rebind actions.go to a play action that no longer existed, so
+			# the row shipped with actions.more as its ONLY action - Material
+			# then opened the context menu on tap instead of the track list.
+			check('0.1.53: album row no longer overrides the descend action (on_select removed)',
+				!exists $it->{on_select}
+				&& (($it->{play} || '') eq 'xmly://album/30816438')
+				&& ref $it->{url} eq 'CODE');
 			check('albumItem: itemActions.info routes CM to ximalaya items with baked cmAlbum (0.1.38)',
 				$it->{itemActions}
 				&& $it->{itemActions}{info}
@@ -1469,6 +1476,23 @@ close $fh;
 				&& ($it->{itemActions}{info}{fixedParams}{cmAlbum} || '') eq '30816438'
 				&& ($it->{itemActions}{info}{fixedParams}{cmIcon} || '') eq 'https://c/1'
 				&& ($it->{itemActions}{info}{fixedParams}{cmTitle} || '') eq 'A - x [VIP]');
+
+			# 0.1.54: the row carries `play`, so XMLBrowser's $isPlayable is
+			# true and the generic 'go' branch is skipped (XMLBrowser.pm L1029
+			# + L1230) - without an explicit descend the CLI/jive/Material item
+			# hash had only actions.more and Material opened the context menu on
+			# every tap. itemActions.items is what L1293-1299 maps to actions.go.
+			check('0.1.54: album row carries an explicit descend (itemActions.items) for CLI/Material',
+				$it->{itemActions}
+				&& $it->{itemActions}{items}
+				&& ($it->{itemActions}{items}{command}[0] || '') eq 'ximalaya'
+				&& ($it->{itemActions}{items}{command}[1] || '') eq 'items'
+				&& ($it->{itemActions}{items}{fixedParams}{cmBrowseAlbum} || '') eq '30816438'
+				&& ($it->{itemActions}{items}{fixedParams}{cmBrowseTitle} || '') eq 'A - x [VIP]'
+				&& ($it->{itemActions}{items}{fixedParams}{cmBrowseIcon} || '') eq 'https://c/1');
+			check('0.1.54: descend and context menu are separate actions (CM untouched)',
+				($it->{itemActions}{items}{fixedParams}{cmAlbum} || '') eq ''
+				&& ($it->{itemActions}{info}{fixedParams}{cmBrowseAlbum} || '') eq '');
 		}
 
 		# --------------------------------- Daphile pre-play page CM (0.1.38)

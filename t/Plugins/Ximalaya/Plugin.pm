@@ -440,7 +440,16 @@ sub albumItem {
 			($album->{cover}     // ''),
 		],
 		play            => 'xmly://album/' . $album->{id},
-		on_select       => 'play',
+		# 0.1.53: NO on_select here any more. 0.1.37 added on_select='play' to
+		# make the row a "touch to play" item like a TuneIn station, but with
+		# the feed-level play/add actions gone (0.1.40) it only destroyed the
+		# row's DESCEND action: XMLBrowser sets goAction='play' for such a row
+		# and rebinds actions.go to the row's play action, which no longer
+		# exists -> the item shipped with actions.more as its ONLY action, so a
+		# tap in the Material skin opened our context menu instead of the track
+		# list (all entry points: charts, search, favourites). The pre-play
+		# page it was meant to trigger is served by the context menu instead
+		# (0.1.38+), and Daphile ignores touchToPlay entirely (firmware A/B).
 		favorites_url   => _albumFeedUrl($album->{id}),
 		favorites_title => $name,
 		favorites_type  => 'link',
@@ -454,7 +463,29 @@ sub albumItem {
 		# buttons from the row's context menu; route it to our own tile list
 		# (handleFeed cmAlbum branch) in the TrackInfo shape that page
 		# renders. Play = whole album via explodePlaylist.
+		#
+		# 0.1.54: plus an EXPLICIT DESCEND action. The row carries `play` (the
+		# Daphile row play button / whole-album url), which makes XMLBrowser's
+		# $isPlayable true (Slim/Control/XMLBrowser.pm L1029) and therefore
+		# SKIPS the generic 'go' branch (L1230) - so the CLI/jive/Material item
+		# hash had NO descend action at all and its only action was this context
+		# menu, which Material then opened on every tap ("tapping an album shows
+		# a menu instead of the track list", all entry points). L1293-1299 maps
+		# itemActions.items to actions.go whenever no goAction is set, so this
+		# restores the descend for CLI/jive/Material by album id (the same route
+		# the context menu's "browse tracks" tile uses) while the web skin keeps
+		# descending through the coderef/passthrough mechanism unchanged.
 		itemActions => {
+			items => {
+				command     => [ 'ximalaya', 'items' ],
+				fixedParams => {
+					menu           => 1,
+					cmBrowseAlbum  => $album->{id},
+					cmBrowseTitle  => $name,
+					cmBrowseAuthor => ( $album->{announcer} // '' ),
+					cmBrowseIcon   => ( $album->{cover} || '' ),
+				},
+			},
 			info => {
 				command     => [ 'ximalaya', 'items' ],
 				fixedParams => {
