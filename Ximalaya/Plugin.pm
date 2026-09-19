@@ -258,9 +258,55 @@ sub _cm_feed_items {
 	return;
 }
 
+# 0.1.55: WHERE THE REQUEST PARAMS ACTUALLY LIVE.
+#
+# Every coderef feed (handleFeed here, and the subfeeds it dispatches to) is
+# called with a THIRD argument that is a wrapper, not the request params:
+#
+#   CLI / jive / JSON-RPC  (Slim::Control::XMLBrowser::cliQuery L149 + L193):
+#       { params => $request->getParamsCopy(), isControl => 1,
+#         index => N, quantity => M }
+#   web page descend into a coderef item (Slim::Web::XMLBrowser L505/L517):
+#       { isWeb => 1, wantMetadata => 1, wantIndex => 1, search => ...,
+#         params => $stash->{'query'}, index => N, quantity => M }
+#
+# So the cm*/query params sit ONE LEVEL DOWN in $args->{params}; only
+# index/quantity (and search for search subfeeds) are top level. Reading
+# $params->{cmBrowseAlbum} straight off the top level therefore saw nothing on
+# the CLI path, the handler fell through to the plugin root menu, and every
+# album tap looked like "it threw me back to the plugin's main screen".
+#
+# Worse, 0.1.54's itemActions.items made BOTH skins take that CLI path:
+# Slim::Web::XMLBrowser::findAction(...,'items') (L423-470) turns the descend
+# into an executed CLI request
+#   ximalaya items 0 50 cmBrowseTitle:.. cmBrowseIcon:.. cmBrowseAlbum:.. menu:1
+# so the Daphile skin - which used to descend through the item's coderef +
+# passthrough and never needed these params - regressed the moment the action
+# existed. Normalising the two shapes here fixes both clients in one place.
+sub _feed_args {
+	my ($args) = @_;
+	return $args unless ref $args eq 'HASH';
+
+	my %merged;
+	my $inner = $args->{params};
+	%merged = %$inner if ref $inner eq 'HASH';
+
+	# top level always wins: index/quantity/search/isControl are set by the
+	# caller and describe THIS call, not the original browse request.
+	for my $k (keys %$args) {
+		next if $k eq 'params';
+		$merged{$k} = $args->{$k};
+	}
+
+	return \%merged;
+}
+
 # 0.1.7 order: browse entries first, tools next, status last
 sub handleFeed {
 	my ($client, $cb, $params, $args) = @_;
+
+	# 0.1.55: flatten whatever shape the caller used (see _feed_args).
+	$params = _feed_args($params);
 
 	# 0.1.39/0.1.41: "Browse tracks" tile in the album context menu - descends
 	# into the album's track list carrying title/author for the songinfo

@@ -1557,6 +1557,44 @@ close $fh;
 				{ menu => 1, cmBrowseAlbum => '12148879', index => 0, quantity => 50 });
 			check('cm browse: descends into the album track list feed (0.1.39)',
 				exists $out->{items} && @{ $out->{items} || [] } >= 1);
+
+			# 0.1.55: BOTH skins reach us through the CLI wrapper. Material's
+			# JSON-RPC goes straight to Slim::Control::XMLBrowser::cliQuery
+			# ({params=>..., index=>..., quantity=>...}), and the Daphile web
+			# descend (Slim::Web::XMLBrowser L423-460) SYNTHESISES a CLI request
+			# from itemActions.items, which lands in the same place. Reading cm*
+			# off the top level therefore saw nothing and every album tap fell
+			# through to the plugin root menu.
+			my $merged = Plugins::Ximalaya::Plugin::_feed_args({
+				params => { cmBrowseAlbum => '9', menu => 1 }, index => 3, quantity => 50 });
+			check('0.1.55: _feed_args flattens the CLI wrapper and keeps the call window on top',
+				($merged->{cmBrowseAlbum} || '') eq '9'
+				&& ($merged->{menu} || '') eq '1'
+				&& $merged->{index} == 3
+				&& $merged->{quantity} == 50);
+
+			my $flat = Plugins::Ximalaya::Plugin::_feed_args({ menu => 1, cmBrowseAlbum => '9' });
+			check('0.1.55: _feed_args leaves a flat (web page) params hash untouched',
+				($flat->{cmBrowseAlbum} || '') eq '9' && ($flat->{menu} || '') eq '1');
+
+			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
+				{ params => { menu => 1, cmBrowseAlbum => '12148879',
+				              cmBrowseTitle => 'T', cmBrowseAuthor => 'A',
+				              cmBrowseIcon => 'https://c/9' },
+				  isControl => 1, index => 0, quantity => 50 });
+			check('0.1.55: CLI shape descends into the album (no root-menu fallback)',
+				exists $out->{items}
+				&& @{ $out->{items} || [] } >= 1
+				&& !grep { ($_->{name} || '') =~ /^PLUGIN_XIMALAYA_(MYALBUMS|CATEGORY|SEARCH|PASTE|ACCOUNT)/ }
+					@{ $out->{items} || [] });
+
+			Plugins::Ximalaya::Plugin::handleFeed($client, sub { $out = shift },
+				{ params => { menu => 1, cmAlbum => '12148879', cmTitle => 'AL', cmIcon => '' },
+				  isControl => 1, index => 0, quantity => 50 });
+			$tiles = $out->{items} || [];
+			check('0.1.55: CLI shape also finds the context-menu params (tile list, not the menu)',
+				@$tiles == 5
+				&& ($tiles->[4]{name} || '') eq 'PLUGIN_XIMALAYA_BROWSE_TRACKS');
 		}
 
 		# tier 1 happy path: mobile pages to the exact total; the observed
