@@ -506,16 +506,78 @@ sub albumHandler {
 	my ($client, $cb, $args, $albumId, $albumTitle, $albumAuthor, $albumCover) = @_;
 	$albumId ||= '';
 
-	my $quantity = $args->{quantity} || 50;
-	$quantity = 1                if $quantity < 1;
-	$quantity = PC_SHOW_MAX()    if $quantity > PC_SHOW_MAX();
-	my $index = $args->{index} || 0;
-	my $page  = int($index / $quantity) + 1;
+	# 0.1.51 - WINDOW FILLING. The old code clamped the requested window to
+	# PC_SHOW_MAX (50) and then handed the clamped result to XMLBrowser: for a
+	# UI window wider than 50 (the CLI/jive/JSON-RPC path can ask for any
+	# width, the Daphile/Material kiosk asks for its own page size) the missing
+	# slots came back as EMPTY rows - no artwork, no id, and tapping one opened
+	# an album with no id, i.e. the reported "tracks without artwork / API
+	# error" behaviour. Measured on a 211-track album: window 60 -> 50 tracks +
+	# 10 empty rows.
+	#
+	# The tiers honour at most PC_SHOW_MAX rows per request, so a wider window
+	# is now assembled from as many server pages as it needs; the offset the UI
+	# asked for stays exact ($index / $first_page / $skip below).
+	my $window = $args->{quantity} || 50;
+	$window = 1 if $window < 1;
+	my $index      = $args->{index} || 0;
+	my $page_size  = $window > PC_SHOW_MAX() ? PC_SHOW_MAX() : $window;
+	my $first_page = int($index / $page_size) + 1;
+	my $skip       = $index % $page_size;   # rows to drop from the first page
+	my $max_pages  = 8;                     # fan-out guard
 
-	my $render = sub {
+	# Generic window filler. $fetch->($page,$size,$cb,$ecb) hits one tier;
+	# $more->($tracks,$extra,$have) says whether another page exists. Rows that
+	# already arrived always win over an error row.
+	my $render;    # assigned below; $fill closes over it
+	my $fill = sub {
+		my ($fetch, $more, $on_error) = @_;
+
+		my $acc = [];
+		my ($total, $page, $pages) = (undef, $first_page, 0);
+
+		my $slice = sub {
+			my $last = $skip + $window - 1;
+			$last = $#$acc if $last > $#$acc;
+			return $last >= $skip ? [ @$acc[ $skip .. $last ] ] : [];
+		};
+
+		my $again;
+		$again = sub {
+			$fetch->($page, $page_size,
+				sub {
+					my ($tracks, $extra) = @_;
+					push @$acc, @$tracks;
+					$total = $extra if !defined $total && defined $extra;
+					$pages++;
+					$page++;
+
+					my $enough = @$acc >= $skip + $window;
+					if (!$enough && @$tracks && $pages < $max_pages
+						&& $more->($tracks, $extra, scalar @$acc)) {
+						$again->();
+						return;
+					}
+					$render->($slice->(), $total, $index);
+					return;
+				},
+				sub {
+					my ($code) = @_;
+					$render->($slice->(), $total, $index) if @$acc;
+					$on_error->($code) unless @$acc;
+					return;
+				},
+			);
+			return;
+		};
+
+		$again->();
+		return;
+	};
+
+	$render = sub {
 		my ($tracks, $total, $offset) = @_;
-		$log->debug("Ximalaya: albumHandler album=$albumId idx=$index qty=$quantity got "
-			. scalar(@$tracks) . " tracks at offset=$offset"
+		$log->debug("Ximalaya: albumHandler album=$albumId idx=$index window=$window got "			. scalar(@$tracks) . " tracks at offset=$offset"
 			. (defined $total ? " of $total" : ''));
 		my $n = 0;
 		my @items = map { trackItem(++$n + $offset, $_) } @$tracks;
@@ -531,7 +593,7 @@ sub albumHandler {
 		# Callers that decorate the list themselves (the favourites feed)
 		# pass no_play_row and get the plain track total back.
 		if (!$args->{no_play_row}
-			&& defined $total && $index <= $total && $index + $quantity > $total && @items) {
+			&& defined $total && $index <= $total && $index + $window > $total && @items) {
 			push @items, {
 				name => cstring($client, 'PLUGIN_XIMALAYA_PLAY_ALL'),
 				type => 'audio',
@@ -606,13 +668,19 @@ sub albumHandler {
 			$fail->($pccode);
 			return;
 		}
-		Plugins::Ximalaya::API->albumTracks(
-			$albumId,
-			$page,
-			$quantity,
+		$fill->(
+			sub {
+				my ($p, $size, $ok, $err) = @_;
+				Plugins::Ximalaya::API->albumTracks($albumId, $p, $size, $ok, $err);
+			},
 			sub {
 				my ($tracks, $total) = @_;
-				$render->($tracks, $total, ($page - 1) * $quantity);
+				# a FULL page means another page exists; a short page ends this
+				# tier's list (the declared total is only a sanity bound - a
+				# stub/endpoint that keeps repeating a short page must not make
+				# us page forever)
+				return @$tracks >= $page_size
+					&& (!defined $total || $_[2] < $total);
 			},
 			sub {
 				my ($code) = @_;
@@ -630,19 +698,7 @@ sub albumHandler {
 			$cb->({ items => [ { name => cstring($client, 'PLUGIN_XIMALAYA_COOLDOWN'), type => 'text' } ] });
 			return;
 		}
-		Plugins::Ximalaya::API->albumTracks(
-			$albumId,
-			$page,
-			$quantity,
-			sub {
-				my ($tracks, $total) = @_;
-				$render->($tracks, $total, ($page - 1) * $quantity);
-			},
-			sub {
-				note_risk_hit('tracks_web') if ($_[0] || '') eq 'risk';
-				$fail->($_[0]);
-			},
-		);
+		$tryWeb->(undef);
 		return;
 	}
 
@@ -653,15 +709,25 @@ sub albumHandler {
 			$tryWeb->(undef);
 			return;
 		}
-		Plugins::Ximalaya::API->albumTracksShow($albumId, $page, $quantity,
+		$fill->(
 			sub {
-				my ($tracks, $has_more) = @_;
-				my $off = ($page - 1) * $quantity;
-				# no server total: show "one more page" while hasMore, exact
-				# count once the last page arrives
-				my $total = $has_more ? $off + @$tracks + $quantity
-				                      : $off + @$tracks;
-				$render->($tracks, $total, $off);
+				my ($p, $size, $ok, $err) = @_;
+				# the tier has no total, so the adapter turns hasMore into the
+				# usual "one more page while more remains, exact count at the
+				# end" estimate the 0.1.14 page math relies on
+				Plugins::Ximalaya::API->albumTracksShow($albumId, $p, $size,
+					sub {
+						my ($tracks, $has_more) = @_;
+						my $seen = ($p - 1) * $size + scalar @$tracks;
+						$ok->($tracks, $has_more ? $seen + $size : $seen);
+					},
+					$err);
+			},
+			sub {
+				my ($tracks, $total, $have) = @_;
+				# limit < total means "more rows exist" for this tier
+				return @$tracks >= $page_size
+					&& (!defined $total || $have < $total);
 			},
 			sub {
 				my ($code) = @_;
@@ -679,10 +745,15 @@ sub albumHandler {
 	# The 0.1.15 albumInfo detour is gone: album/simple carries no track
 	# count at all (probe-verified), so it could never fix the page count.
 	my $tryMobile = sub {
-		Plugins::Ximalaya::API->albumTracksMobile($albumId, $page, $quantity,
+		$fill->(
 			sub {
-				my ($tracks, $total) = @_;
-				$render->($tracks, $total, ($page - 1) * $quantity);
+				my ($p, $size, $ok, $err) = @_;
+				Plugins::Ximalaya::API->albumTracksMobile($albumId, $p, $size, $ok, $err);
+			},
+			sub {
+				my ($tracks, $total, $have) = @_;
+				return @$tracks >= $page_size
+					&& (!defined $total || $have < $total);
 			},
 			sub {
 				my ($code) = @_;

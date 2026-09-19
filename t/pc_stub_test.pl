@@ -547,10 +547,11 @@ close $fh;
 	$prefs->set('quality', 128);
 	$prefs->set('mobile_channel', 1);   # initPlugin default (stub env skips init)
 	my @calls;
+	my @sizes;   # "album:page:size" the handler asked each tier for (0.1.51)
 	local *Plugins::Ximalaya::API::albumTracksMobile = sub {
 		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
 		push @calls, "mobile:$albumId:$page";
-		if ($albumId == 555 || $albumId == 777 || $albumId == 888 || $albumId == 999) { $ecb->('empty'); return; }
+		if ($albumId == 555 || $albumId == 777 || $albumId == 888 || $albumId == 999 || $albumId == 601) { $ecb->('empty'); return; }
 		$cb->([
 			{ id => 759074956, title => 'm1', paid => 1,
 				cover => 'https://imagev2.xmcdn.com/group21/M0A/1A/1B/wKgJDFm1_T87x87.jpg',
@@ -563,6 +564,17 @@ close $fh;
 	local *Plugins::Ximalaya::API::albumTracksShow = sub {
 		my ($class, $albumId, $page, $size, $cb, $ecb) = @_;
 		push @calls, "pc:$albumId:$page";
+		push @sizes, "$albumId:$page:$size";
+		if ($albumId == 601) {
+			# realistic full pages: the pc tier honours size<=PC_SHOW_MAX, so a
+			# wider UI window needs several requests (0.1.51)
+			my @rows = map {
+				{ id => ($page - 1) * $size + $_, title => "t$_", paid => 0,
+				  cover => 'https://c/x.jpg', duration => 600 }
+			} 1 .. $size;
+			$cb->(\@rows, $page < 2 ? 1 : 0);
+			return;
+		}
 		if ($albumId == 555 || $albumId == 999) { $ecb->('empty'); return; }
 		if ($albumId == 777) { $cb->([ { id => 9, title => 'last', paid => 0, cover => '', duration => 840 } ], 0); return; }
 		$cb->([
@@ -670,6 +682,41 @@ close $fh;
 	check('album: mobile+pc+web failure surfaces one error item',
 		"@calls" eq 'mobile:999:1 pc:999:1 web:999:1:50'
 		&& $out->{items} && @{ $out->{items} } == 1 && $out->{items}[0]{type} eq 'text');
+
+	# 0.1.51 WINDOW FILLING: the old code clamped the UI window to
+	# PC_SHOW_MAX(50) and returned the clamped list, so a wider window came back
+	# short and XMLBrowser padded the missing slots with EMPTY rows (no artwork,
+	# no id -> "API error" when tapped; measured on device: 60-wide window on a
+	# 211-track album -> 50 tracks + 10 empty rows). Album 601 serves realistic
+	# full pages (size<=50, hasMore for page 1 only).
+	{
+		@calls = ();
+		@sizes = ();
+		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+			{ index => 0, quantity => 60 }, 601);
+		check('0.1.51: a 60-wide window is filled from two pc pages (no short window)',
+			"@calls" eq 'mobile:601:1 pc:601:1 pc:601:2'
+			&& "@sizes" eq '601:1:50 601:2:50'
+			&& @{ $out->{items} || [] } == 60
+			&& $out->{offset} == 0);
+
+		@calls = ();
+		@sizes = ();
+		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+			{ index => 0, quantity => 50 }, 601);
+		check('0.1.51: a 50-wide window still costs exactly one pc request',
+			"@calls" eq 'mobile:601:1 pc:601:1' && @{ $out->{items} || [] } == 50);
+
+		@calls = ();
+		@sizes = ();
+		Plugins::Ximalaya::Plugin::albumHandler($client, sub { $out = shift },
+			{ index => 60, quantity => 50 }, 601);
+		check('0.1.51: index=60 skips inside the server page and fills the window',
+			"@calls" eq 'mobile:601:2 pc:601:2 pc:601:3' && $out->{offset} == 60
+			&& @{ $out->{items} || [] } == 51   # 50 tracks + the trailing play-all row
+			&& ($out->{items}[0]{name} || '') =~ /^61\./
+			&& ($out->{items}[50]{name} || '') eq 'PLUGIN_XIMALAYA_PLAY_ALL');
+	}
 
 	# pc off -> web-only (pre-0.1.12 behaviour), mobile+pc never touched
 	{
