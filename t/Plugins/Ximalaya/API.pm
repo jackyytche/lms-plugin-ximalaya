@@ -1105,6 +1105,31 @@ sub rankAlbums {
 	return;
 }
 
+# 0.1.50: web-catalog slugs the endpoint refuses. Probed 2026-09-19:
+# category=qita answers ret=404 for EVERY page size (20..100), so a chart
+# whose harvest produced it left the user staring at "API error".
+my %CATEGORY_CODE_DENY = map { $_ => 1 } qw(qita);
+
+# Pick the web-catalog slug for a chart. Taking the FIRST album's categoryCode
+# was wrong twice over: charts mix categories (the 全站 charts carry 8 distinct
+# codes - youshengshu/lishi/qita/xiangsheng/yule/gerenchengzhang/waiyu/yinyue),
+# and some codes are not valid catalog slugs at all. The dominant VALID code is
+# the honest answer for the trailing "browse ALL albums in this category" row;
+# '' means we have none and the row is simply not offered.
+sub _pick_category_code {
+	my ($class, $albums) = @_;
+
+	my %count;
+	for my $a (@$albums) {
+		my $c = $a->{categoryCode} // '';
+		next if $c eq '' || $CATEGORY_CODE_DENY{$c};
+		$count{$c}++;
+	}
+
+	my ($code) = sort { $count{$b} <=> $count{$a} || $a cmp $b } keys %count;
+	return defined $code ? $code : '';
+}
+
 # Pure parser: data.rankList[] -> (album hashes, $categoryCode, undef)
 sub _parse_rank_albums {
 	my ($class, $data) = @_;
@@ -1115,10 +1140,9 @@ sub _parse_rank_albums {
 		my $albums = $r->{albums} || [];
 		next unless @$albums;
 
-		my $category_code = '';
+		my $category_code = $class->_pick_category_code($albums);
 		my @out = map {
 			my $a = $_;
-			$category_code ||= $a->{categoryCode} // '';
 			{
 				id          => $a->{id},
 				title       => $a->{albumTitle} // '?',

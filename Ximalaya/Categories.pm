@@ -34,8 +34,11 @@ use warnings;
 use utf8;
 
 use Slim::Utils::Strings qw(cstring);
+use Slim::Utils::Log;
 
 use Plugins::Ximalaya::API;
+
+my $log = logger('plugin.ximalaya');
 
 # Legacy static table - superseded by the dynamic rankTabs table above.
 # Kept only as a reference of the 0.1.11 placeholders (compile_check
@@ -176,6 +179,22 @@ sub rankFeed {
 # (no guessed slugs). queryCategoryPageAlbums verified zero risk-control
 # (2026-09-10, m0/diag_category.py) with exact data.total and stable
 # 50/page - this is the FULL browse, unlike the 100-cap charts.
+#
+# 0.1.50 - two live-endpoint behaviours this has to absorb (probed 2026-09-19):
+#
+#  1. The catalog serves at most 50 rows per request whatever perPage says
+#     (perPage=51/60/100 all echo pageSize=50). The UI window is normally
+#     itemsPerPage (50), but ANY window wider than the cap made XMLBrowser pad
+#     the short window with EMPTY rows - no artwork, and tapping one opened an
+#     album with no id, i.e. the reported "no artwork / API error" rows. So the
+#     window is now assembled from as many server pages as it needs.
+#  2. A page occasionally comes back with pageSize=0/total=0 (an empty payload
+#     for a perfectly valid category: gerenchengzhang perPage=48 did this, next
+#     attempt was fine). That surfaced as "empty" -> an error row. One retry
+#     with a different page size rides over it.
+use constant CATALOG_SERVER_MAX => 50;   # observed pageSize cap
+use constant CATALOG_RETRY_SIZE => 30;   # second chance for a short payload
+use constant CATALOG_MAX_PAGES  => 8;    # safety: never fan out further
 
 sub allFeed {
 	# XMLBrowser windowing: index = first wanted item, quantity = items/page
@@ -185,24 +204,94 @@ sub allFeed {
 	my $quantity = $args->{quantity} || 50;
 	$quantity = 1   if $quantity < 1;
 	$quantity = 200 if $quantity > 200;
-	my $index   = $args->{index} || 0;
-	my $pageNum = int($index / $quantity) + 1;
+	my $index = $args->{index} || 0;
 
-	Plugins::Ximalaya::API->categoryAlbums($catId, 'hot', $pageNum, $quantity,
-		sub {
-			my ($albums, $total) = @_;
-			my $base = ($pageNum - 1) * $quantity;
-			$cb->({
-				items  => [ map { Plugins::Ximalaya::Plugin::albumItem($_) } @$albums ],
-				offset => $base,
-				(defined $total ? (total => $total) : ()),
-			});
-		},
-		sub {
-			Plugins::Ximalaya::Plugin::note_risk_hit('category') if ($_[0] || '') eq 'risk';
-			$cb->({ items => [ Plugins::Ximalaya::Plugin::errItem($client, $_[0]) ] });
-		},
-	);
+	my $page_size  = $quantity > CATALOG_SERVER_MAX ? CATALOG_SERVER_MAX : $quantity;
+	my $first_page = int($index / $page_size) + 1;
+	my $skip       = $index % $page_size;   # rows to drop from the first page
+
+	my $items_ref = [];    # every row fetched from $first_page on
+	my ($total, $page, $batches);
+	$page    = $first_page;
+	$batches = 0;
+
+	my $emit = sub {
+		# @items holds every row fetched from $first_page on; the UI window is
+		# [$skip, $skip + $quantity) inside that accumulation.
+		my $last = $skip + $quantity - 1;
+		$last = $#$items_ref if $last > $#$items_ref;
+		my @window = $last >= $skip ? @$items_ref[ $skip .. $last ] : ();
+		$cb->({
+			items  => [ map { Plugins::Ximalaya::Plugin::albumItem($_) } @window ],
+			offset => $index,
+			(defined $total ? (total => $total) : ()),
+		});
+		return;
+	};
+
+	my $fail = sub {
+		my ($code) = @_;
+		Plugins::Ximalaya::Plugin::note_risk_hit('category') if ($code || '') eq 'risk';
+		$log->debug("Ximalaya: category $catId page $page failed ("
+			. ($code // '?') . ") after $batches batch(es)");
+		$cb->({ items => [ Plugins::Ximalaya::Plugin::errItem($client, $code) ] });
+		return;
+	};
+
+	my $next;
+	$next = sub {
+		my ($size, $retried) = @_;
+		Plugins::Ximalaya::API->categoryAlbums($catId, 'hot', $page, $size,
+			sub {
+				my ($albums, $t) = @_;
+				my $got = scalar @$albums;
+
+				$log->debug("Ximalaya: category $catId page $page/$size -> $got album(s), "
+					. 'total=' . (defined $t ? $t : '?') . ", window=$index+$quantity");
+
+				if ($got) {
+					$total = $t if defined $t && !defined $total;
+					push @$items_ref, @$albums;
+					$batches++;
+					$page++;
+
+					# enough for the window, the server ran out, or the guard
+					my $enough = @$items_ref >= $skip + $quantity;
+					if ($enough || $got < $size || $batches >= CATALOG_MAX_PAGES) {
+						$emit->();
+						return;
+					}
+					$next->($page_size, 0);
+					return;
+				}
+
+				# zero rows: either the flaky payload (retry once with another
+				# page size) or simply the end of the catalogue
+				if (!$retried) {
+					$log->debug("Ximalaya: category $catId page $page empty - retry with "
+						. CATALOG_RETRY_SIZE);
+					$next->(CATALOG_RETRY_SIZE, 1);
+					return;
+				}
+				if (@$items_ref) { $emit->(); return; }   # end of list
+				$fail->('empty');
+			},
+			sub {
+				my ($code) = @_;
+				# the live endpoint sometimes reports an empty payload as an
+				# error code - one retry at another size rides over it
+				if (($code || '') eq 'empty' && !$retried) {
+					$next->(CATALOG_RETRY_SIZE, 1);
+					return;
+				}
+				if (@$items_ref) { $emit->(); return; }    # partial window beats an error row
+				$fail->($code);
+			},
+		);
+		return;
+	};
+
+	$next->($page_size, 0);
 
 	return;
 }

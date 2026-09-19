@@ -1326,7 +1326,10 @@ sub errItem {
 		nonjson  => 'PLUGIN_XIMALAYA_ERR_API',
 		noperm   => 'PLUGIN_XIMALAYA_ERR_NOPERM',
 		nourl    => 'PLUGIN_XIMALAYA_ERR_API',
-		empty    => 'PLUGIN_XIMALAYA_ERR_API',
+		empty    => 'PLUGIN_XIMALAYA_ERR_EMPTY',
+		# 0.1.50: the web catalogue answers ret=404 for a category slug it does
+		# not serve (probed: 'qita'); say so instead of a bare "API error (404)".
+		404      => 'PLUGIN_XIMALAYA_ERR_CATEGORY',
 	);
 
 	my $name;

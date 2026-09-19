@@ -55,6 +55,14 @@ PLUGIN_XIMALAYA_ERR_API
 	EN	API error
 	ZH_CN	接口错误
 
+PLUGIN_XIMALAYA_ERR_CATEGORY
+	EN	This category is not browsable in the full web catalogue - pick another chart
+	ZH_CN	该分类在网页全集中不可用 - 请换个榜单试试
+
+PLUGIN_XIMALAYA_ERR_EMPTY
+	EN	The full catalogue returned no albums for this category
+	ZH_CN	该分类的全集没有返回专辑
+
 PLUGIN_XIMALAYA_COOKIE
 	EN	Login cookie
 	ZH_CN	登录 Cookie

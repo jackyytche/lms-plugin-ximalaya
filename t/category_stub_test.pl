@@ -120,5 +120,130 @@ check('empty: returns (undef, empty)',              !defined $r[0] && $r[1] eq '
 	check('note_risk_hit: category family cooling', Plugins::Ximalaya::Plugin::_cooling('category'));
 }
 
+# ------------------------------------------- 0.1.50 chart slug harvest
+# The trailing "browse ALL albums in this category" row opens the WEB catalog
+# with the chart's categoryCode. Taking the FIRST album's code was wrong: the
+# 全站 charts mix categories, and some codes are not valid web slugs at all
+# (probed 2026-09-19: category=qita -> ret=404 for every page size, which the
+# menu showed as "API error").
+{
+	my $api = 'Plugins::Ximalaya::API';
+
+	my $mixed = { data => { rankList => [ { albums => [
+		{ id => 1, categoryCode => 'lishi' },
+		{ id => 2, categoryCode => 'youshengshu' },
+		{ id => 3, categoryCode => 'youshengshu' },
+		{ id => 4, categoryCode => 'qita' },
+		{ id => 5, categoryCode => 'youshengshu' },
+		{ id => 6, categoryCode => 'lishi' },
+	] } ] } };
+	my ($al, $code) = $api->_parse_rank_albums($mixed);
+	check('0.1.50: category slug = DOMINANT code, not the first album\'s',
+		$code && $code eq 'youshengshu');
+
+	my $only_bad = { data => { rankList => [ { albums => [
+		{ id => 1, categoryCode => 'qita' },
+		{ id => 2, categoryCode => '' },
+	] } ] } };
+	my (undef, $code2) = $api->_parse_rank_albums($only_bad);
+	check('0.1.50: a chart with only invalid/empty codes offers NO browse-all row',
+		defined $code2 && $code2 eq '');
+
+	my $deny_tie = { data => { rankList => [ { albums => [
+		{ id => 1, categoryCode => 'qita' },
+		{ id => 2, categoryCode => 'yinyue' },
+	] } ] } };
+	check('0.1.50: denied code is dropped even when it leads',
+		($api->_parse_rank_albums($deny_tie))[1] eq 'yinyue');
+}
+
+# ------------------------------------------- 0.1.50 allFeed window assembly
+# The catalog caps a response at 50 rows (perPage 51/60/100 all echo 50). A UI
+# window wider than that used to come back short, and XMLBrowser padded the
+# missing slots with EMPTY rows - the reported "no artwork / API error" rows.
+{
+	require Plugins::Ximalaya::Categories;
+
+	# stub the web catalog: 50 rows per page, 1000 albums total
+	my $calls;
+	local *Plugins::Ximalaya::API::categoryAlbums = sub {
+		my ($class, $cat, $sort, $page, $size, $cb, $ecb) = @_;
+		push @$calls, "$page/$size";
+		my $n = $size > 50 ? 50 : $size;
+		my @albums = map {
+			{ id => ($page - 1) * 50 + $_ + 1, title => "a", cover => 'https://c/x.jpg',
+			  announcer => '', paid => 0 }
+		} 0 .. $n - 1;
+		$cb->(\@albums, 1000);
+	};
+
+	# 50-wide window: one server call, no holes
+	$calls = [];
+	my ($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 'youshengshu');
+	check('0.1.50: a 50-row window is one server call',
+		"@$calls" eq '1/50' && @{ $out->{items} } == 50 && $out->{offset} == 0
+		&& $out->{total} == 1000);
+
+	# helper: the album id survives in the row's favourites url
+	my $ids = sub {
+		my ($out) = @_;
+		return join ',', map { (($_->{favorites_url} || '') =~ /album=(\d+)/) ? $1 : '?' }
+			@{ $out->{items} };
+	};
+
+	# 100-wide window: assembled from two server pages, still no holes
+	$calls = [];
+	($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift },
+		{ index => 0, quantity => 100 }, 'youshengshu');
+	check('0.1.50: a 100-row window is filled from two server pages (no empty rows)',
+		"@$calls" eq '1/50 2/50' && @{ $out->{items} } == 100
+		&& $ids->($out) =~ /^1,2,.*,100$/);
+
+	# window starting mid-server-page: first page dropped rows are skipped
+	$calls = [];
+	($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift },
+		{ index => 60, quantity => 50 }, 'youshengshu');
+	check('0.1.50: index=60 skips within the server page and fills the window',
+		"@$calls" eq '2/50 3/50' && @{ $out->{items} } == 50
+		&& $out->{offset} == 60 && $ids->($out) =~ /^61,62,.*,110$/);
+
+	# the live endpoint intermittently answers pageSize=0/total=0 for a VALID
+	# category: one retry at another page size must ride over it (and the
+	# window still gets filled, here by continuing with the next page)
+	$calls = [];
+	my $seen = 0;
+	local *Plugins::Ximalaya::API::categoryAlbums = sub {
+		my ($class, $cat, $sort, $page, $size, $cb, $ecb) = @_;
+		push @$calls, "$page/$size";
+		if ($seen++ == 0) { $ecb->('empty'); return; }
+		$cb->([ map { { id => $_, title => "a", cover => 'https://c/x.jpg' } } 1 .. $size ], 1000);
+	};
+	($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 'gerenchengzhang');
+	check('0.1.50: an empty payload is retried once at another page size',
+		"@$calls" =~ /^1\/50 1\/30 /
+		&& @{ $out->{items} } == 50);
+
+	# a genuine endpoint error (invalid slug -> ret 404) still surfaces, with a
+	# dedicated message instead of a bare "API error"
+	$calls = [];
+	local *Plugins::Ximalaya::API::categoryAlbums = sub {
+		my ($class, $cat, $sort, $page, $size, $cb, $ecb) = @_;
+		push @$calls, "$page/$size";
+		$ecb->(404);
+	};
+	($out, $client) = ({}, bless({}, 'StubClient'));
+	Plugins::Ximalaya::Categories::allFeed($client, sub { $out = shift },
+		{ index => 0, quantity => 50 }, 'qita');
+	check('0.1.50: invalid slug -> one message row, no retry storm',
+		@$calls == 1 && @{ $out->{items} } == 1
+		&& ($out->{items}[0]{name} || '') eq 'PLUGIN_XIMALAYA_ERR_CATEGORY');
+}
+
 print $fail ? "\nCATEGORY STUB TESTS FAILED\n" : "\nALL CATEGORY STUB TESTS PASSED ($n)\n";
 exit($fail ? 1 : 0);
