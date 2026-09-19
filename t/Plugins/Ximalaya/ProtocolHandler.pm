@@ -250,8 +250,15 @@ sub getMetadataFor {
 # tracks that have not been resolved yet. No ct/bitrate here: the codec is
 # only known at resolve time, and the play-time publication overwrites
 # this entry with the full data anyway.
+#
+# 0.1.47: now ALSO called per rendered row (Plugin::trackItem) - see the
+# long note there. The list data is already in hand in both callers, so
+# the extra coverage still costs zero API calls; the return value is the
+# number of URLs actually published (callers/tests can assert on it).
 sub _publish_queue_metadata {
 	my ($class, $tracks) = @_;
+
+	my @published;
 
 	for my $t (@$tracks) {
 		next unless $t && $t->{id};
@@ -265,9 +272,20 @@ sub _publish_queue_metadata {
 		next unless scalar keys %meta;
 
 		Slim::Music::Info::setRemoteMetadata('xmly://' . $t->{id}, \%meta);
+		push @published, 'xmly://' . $t->{id};
 	}
 
-	return;
+	if (@published) {
+		# One line per call (a rendered row = one call, an exploded album =
+		# one call with the whole list): the ids are the diagnostic handle
+		# for "which URLs can now render in the queue".
+		$log->debug('Ximalaya: queue metadata published for ' . scalar(@published)
+			. ' track(s): '
+			. join(', ', @published[0 .. ($#published > 7 ? 7 : $#published)])
+			. ($#published > 7 ? ', ...' : ''));
+	}
+
+	return scalar @published;
 }
 
 sub getNextTrack {

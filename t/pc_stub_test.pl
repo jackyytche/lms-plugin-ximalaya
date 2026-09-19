@@ -1635,5 +1635,61 @@ close $fh;
 	$prefs->set('pc_channel', 1);
 }
 
+# ------------------------------------ render-time publication (0.1.47)
+# User report: a track added with the album row's "+" button showed a queue
+# row with no title and no artwork (playable), while the page's "play whole
+# album" button produced fully labelled rows. Root cause: the row's add
+# action is 'playlist add xmly://<id>', and explodePlaylist returns a
+# non-album URL unchanged (ProtocolHandler L58-62), so nothing ever
+# published metadata for it - an added-but-unplayed row has no DB row and
+# getMetadataFor answers {}. Fix: trackItem publishes while the row is
+# built. This guard pins the whole chain: render -> publish -> DB row +
+# image cache -> getMetadataFor queue fallback.
+{
+	Slim::Music::Info::reset_remote_meta();
+	Slim::Schema::clear_rows();
+	Slim::Utils::Cache::clear_store();
+
+	my $row = { id => 420000111, title => '第1集', paid => 0,
+	            cover => 'https://c/1.jpg', duration => 601 };
+
+	my $before = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://420000111');
+	check('0.1.47: an added-but-unrendered track has NO queue metadata (the reported bug)',
+		$before && !scalar keys %$before);
+
+	# rendering the row IS the fix - zero API calls, data already in hand
+	Plugins::Ximalaya::Plugin::trackItem(1, $row);
+
+	check('0.1.47: trackItem publishes title/secs/cover into the track row + image cache',
+		Slim::Schema->get_row('xmly://420000111')->{title} eq '第1集'
+		&& Slim::Schema->get_row('xmly://420000111')->{secs} == 601
+		&& Slim::Utils::Cache->new->get('remote_image_xmly://420000111') eq 'https://c/1.jpg');
+
+	my $after = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://420000111');
+	check('0.1.47: the row "+" queue row now renders title + duration + artwork',
+		$after && $after->{title} eq '第1集' && $after->{duration} == 601
+		&& $after->{cover} eq 'https://c/1.jpg');
+
+	# control: never rendered, never played -> still empty, so the fix is
+	# provably the render-time publication and not some global change
+	my $ctrl = Plugins::Ximalaya::ProtocolHandler->getMetadataFor(undef, 'xmly://999000111');
+	check('0.1.47: control - a never-rendered track still answers empty metadata',
+		$ctrl && !scalar keys %$ctrl);
+
+	# placeholder protection carried over from 0.1.44: nothing publishable
+	Slim::Schema::clear_rows();
+	Plugins::Ximalaya::Plugin::trackItem(2, { id => 420000112, title => '?', cover => '', duration => 0 });
+	check('0.1.47: a placeholder-only row publishes nothing (no bogus DB row)',
+		!Slim::Schema->get_row('xmly://420000112'));
+
+	check('0.1.47: _publish_queue_metadata returns the published-url count',
+		Plugins::Ximalaya::ProtocolHandler->_publish_queue_metadata(
+			[ $row, { id => 420000113, title => '?', cover => '', duration => 0 } ]) == 1);
+
+	Slim::Schema::clear_rows();
+	Slim::Utils::Cache::clear_store();
+	Slim::Music::Info::reset_remote_meta();
+}
+
 print $fail ? "\nPC STUB TESTS FAILED\n" : "\nALL PC STUB TESTS PASSED ($n)\n";
 exit($fail ? 1 : 0);

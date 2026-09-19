@@ -706,6 +706,51 @@ sub albumHandler {
 sub trackItem {
 	my ($idx, $t) = @_;
 
+	# 0.1.47: RENDER-TIME metadata publication - the fix for blank play-queue
+	# rows. User report: a track added with the row's "+" button showed a
+	# queue row with NO title and NO artwork (playable, first few rows
+	# sometimes fine), while the album page's "play whole album" button
+	# produced perfectly labelled rows.
+	#
+	# Why: the row's add action is 'playlist add xmly://<id>' (itemActions
+	# below). Commands.pm L1384-1400 hands every xmly:// URL to
+	# ProtocolHandler::explodePlaylist, which for a NON-album URL just
+	# returns the URL itself (L58-62) - so nothing ever publishes metadata
+	# for it. The queue row is then a bare URL string (parseListRef returns
+	# strings verbatim; no DB row is created on add), and the status query
+	# (Queries.pm L5698 objectForUrl -> L5726-5733 getMetadataFor, L5779
+	# title = remoteMeta || track->title, L5741 d forced to remoteMeta d)
+	# renders title=None/duration=0/artwork=none. The whole-album path was
+	# fine only because explodePlaylist publishes the entire list at enqueue
+	# time (0.1.44).
+	#
+	# Fix: publish while the row is being BUILT. The data is already in hand
+	# (title/duration/cover came from the album list API), so this costs zero
+	# extra API calls - it just commits TITLE/SECS into the track row and the
+	# cover into the 30-day remote_image_ cache, which is exactly what
+	# getMetadataFor's queue fallback reads back. trackItem is the single row
+	# factory, so every row-emitting surface is covered: the menu album page,
+	# my albums, and the favourites albumfeed (which renders albumHandler's
+	# items).
+	#
+	# Device evidence 2026-09-19 (Daphile 25.05, plugin.ximalaya=DEBUG):
+	#   BEFORE (0.1.46) the user's live queue held 8 rows added with "+":
+	#     title 0/8, duration 0/8, artwork 1/8 (that one cover came from the
+	#     30-day image cache of an earlier resolve - the DB row had been
+	#     pruned; see m0/queue_probe_live.json).
+	#   AFTER (0.1.47) rendering album 12148879 logged 46 publication lines
+	#     in 50 ms (m0/evidence_postfix_logwindow.txt), and the same
+	#     "playlist add" then produced:
+	#       xmly://549382127 -> title='《西溪的晴雨》...' duration=458 artwork=yes
+	#     while a never-rendered control URL added in the same run stayed
+	#       xmly://999000111 -> title=None duration=0 artwork=no
+	#     so the filled row can only come from this publication.
+	#   Cost: ~1 ms per row (46 rows of DB row+cover-cache writes per page).
+	# Note for whoever re-verifies: a menu `items` request may be answered
+	# from the XMLBrowser browse-session cache and then does NOT re-render -
+	# use the albumfeed route (or a cold page) to trigger trackItem.
+	Plugins::Ximalaya::ProtocolHandler->_publish_queue_metadata([$t]);
+
 	return {
 		name      => ($t->{paid} ? '[VIP] ' : '') . "$idx. $t->{title}",
 		image     => $t->{cover},
