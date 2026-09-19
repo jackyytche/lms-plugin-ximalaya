@@ -20,6 +20,7 @@ use Slim::Schema;        # 0.1.44: queue fallback reads the track row
 use Slim::Utils::Cache;  # 0.1.44: queue fallback reads remote_image_
 use Slim::Control::Request;  # 0.1.48: late-metadata notification
 use Scalar::Util qw(blessed);
+use Time::HiRes qw(time);    # 0.1.49: playlist-update stamp for polling UIs
 
 use Plugins::Ximalaya::API;
 
@@ -343,6 +344,11 @@ sub shouldCacheImage { 1 }
 sub _apply_resolve {
 	my ($class, $song, $url, $info) = @_;
 
+	# 0.1.49: is this the FIRST time we learn about this stream? A seek re-runs
+	# this whole function with everything already cached, and re-announcing on
+	# every seek would make clients reload their playlist view for nothing.
+	my $fresh = !$METADATA{$url};
+
 	# 0.1.20: feed the now-playing display. Radio streams show
 	# bitrate because their servers send icy-br headers; Ximalaya
 	# CDNs send none. setRemoteMetadata is LMS's official hook:
@@ -371,21 +377,37 @@ sub _apply_resolve {
 	# the resolved url is what actually gets streamed
 	$song->streamUrl($info->{url});
 
-	# 0.1.48: tell the clients the stream metadata has arrived. The resolve is
-	# asynchronous, so the status served while it was in flight had no
-	# codec/rate (getMetadataFor's queue fallback intentionally carries none),
-	# and a client only re-renders its now-playing line when the server pushes
-	# a fresh status. The pushes LMS does generate on its own are tied to
-	# playback notifications (play/open/jump/newsong), NOT to our resolve
-	# finishing - so a slow resolve left the tech line blank until the user
-	# reloaded the page. `playlist newmetadata` is the core's own signal for
-	# exactly this situation (Slim::Player::Protocols::SqueezePlayDirect::
-	# parseMetadata L107 fires it when an out-of-band metadata packet arrives
-	# mid-stream), and statusQuery_filter (Slim::Control::Queries L3785) lets
-	# it through to every subscribed status query, so the panel updates ~1.3s
-	# later (the filter's delay) with no user action.
-	if (blessed($song) && $song->can('master')) {
+	# 0.1.48/0.1.49: tell the clients the stream metadata has arrived. The
+	# resolve is asynchronous, so the status served while it was in flight had
+	# no codec/rate (getMetadataFor's queue fallback intentionally carries
+	# none) - and the user's UI (the **Daphile skin**, SqueezeJS) is a POLLING
+	# client, not a subscriber, so it needs a signal it actually polls:
+	#
+	#   * SqueezeJS Controller polls every 2s with `status - 1 tags:uB` (no
+	#     o/r/T/I) and only calls its rich getStatus()
+	#     (`tags:cgAABbehldiqtyrSSuoKLNJTI`) when _needUpdate() sees a change in
+	#     power/mode/playlist_timestamp/playlist_cur_index/current_title/
+	#     playlist_loop[0].title/url/rate/repeat/tracks. Its one rich fetch
+	#     happens ~60ms after the play click - i.e. BEFORE our resolve - and
+	#     afterwards none of those fields ever change, so #ctrlBitrate stayed
+	#     empty until the user reloaded the page or touched a control (device
+	#     log 02:42:29: anyurl -> rich status at +58ms, then nothing but `uB`
+	#     polls for minutes).
+	#   * Advancing `currentPlaylistUpdateTime` (the ONLY source of
+	#     `playlist_timestamp`, Queries.pm L4027, and compared with a strict
+	#     `>` by _needUpdate) makes the next poll notice and re-read the rich
+	#     status, so the panel fills in by itself within ~2s. The core does the
+	#     same thing on every playlist edit (Commands.pm) and even from
+	#     StreamingController (L883) - here it simply means "the now-playing
+	#     display data changed".
+	#   * The `playlist newmetadata` notification stays for the SUBSCRIBING
+	#     clients (jive/SqueezePlay, cometd/JSON-RPC subscriptions): it is the
+	#     core's own late-metadata signal (SqueezePlayDirect::parseMetadata
+	#     L107) and statusQuery_filter (Queries.pm L3785) lets it through.
+	if ($fresh && blessed($song) && $song->can('master')) {
 		if (my $client = $song->master()) {
+			$client->currentPlaylistUpdateTime(time())
+				if blessed($client) && $client->can('currentPlaylistUpdateTime');
 			Slim::Control::Request::notifyFromArray($client, [ 'playlist', 'newmetadata' ]);
 		}
 	}

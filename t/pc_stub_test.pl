@@ -732,7 +732,16 @@ close $fh;
 				$s->{u} = $u if defined $u;
 				return $s->{u};
 			};
-			*XimaStubSong::master = sub { 'stubclient' };   # 0.1.48 notify target
+			# 0.1.48/0.1.49 notify/bump target: a blessed client that records
+			# the playlist-update stamp the polling Daphile skin watches.
+			my $cli = bless { id => 'stubclient', stamps => [] }, 'XimaStubClient';
+			*XimaStubClient::id = sub { $_[0]->{id} };
+			*XimaStubClient::currentPlaylistUpdateTime = sub {
+				my ($c, $t) = @_;
+				push @{ $c->{stamps} }, $t if defined $t;
+				return $c->{stamps}[-1];
+			};
+			*XimaStubSong::master = sub { $cli };
 			Slim::Music::Info::reset_remote_meta();
 			Slim::Control::Request::clear_notifications();
 			Slim::Utils::Cache::clear_store();
@@ -747,18 +756,31 @@ close $fh;
 				$last && $last->[0] eq 'xmly://track/flac2' && $last->[1]{ct} eq 'audio/flac'
 				&& $song->streamUrl eq 'http://cdn/a.flac?t=1');
 
-			# 0.1.48: the resolve is asynchronous, so the status served while
-			# it was in flight carried no codec/rate and nothing told the
-			# clients when that changed - the now-playing tech line stayed
-			# empty until the user did something that forced a status push
-			# (device report: pressing PAUSE made it appear immediately).
-			# The core's own signal for late stream metadata is
-			# 'playlist newmetadata' (SqueezePlayDirect::parseMetadata L107).
+			# 0.1.49: the Daphile skin (SqueezeJS) polls `status - 1 tags:uB`
+			# and only re-reads the rich status when _needUpdate() spots a
+			# change; playlist_timestamp is the only field we can move, so the
+			# resolve must advance it or #ctrlBitrate stays empty until the
+			# user does something (reload / pause).
+			check('0.1.49: resolve advances the playlist-update stamp (polling UIs re-read status)',
+				@{$cli->{stamps}} == 1 && $cli->{stamps}[0] > 0);
+
+			# 0.1.48 kept for subscribing clients: the core's own late-metadata
+			# signal 'playlist newmetadata' (SqueezePlayDirect::parseMetadata L107)
 			my $notifs = Slim::Control::Request::notifications();
 			check('0.1.48: resolve completion notifies playlist newmetadata (late-metadata signal)',
 				@$notifs == 1
 				&& $notifs->[0][0] eq 'stubclient'
 				&& join('|', @{ $notifs->[0][1] }) eq 'playlist|newmetadata');
+
+			# a seek re-runs _apply_resolve with everything already cached and
+			# must NOT re-announce (no spurious client reloads)
+			Plugins::Ximalaya::ProtocolHandler->_apply_resolve($song, 'xmly://track/flac2', {
+				title => 'x', cover => 'https://imagev2.xmcdn.com/c.jpg',
+				duration => 300, bitrate => 1058000, quality => 'flac',
+				url => 'http://cdn/a.flac?t=2',
+			});
+			check('0.1.49: a re-resolve (seek) does not re-announce',
+				@{$cli->{stamps}} == 1 && @{ Slim::Control::Request::notifications() } == 1);
 
 			# 0.1.48: the codec/rate also go into the persistent cache, which is
 			# the only place that survives a restart (the track row keeps
