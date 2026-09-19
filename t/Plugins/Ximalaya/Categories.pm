@@ -221,6 +221,9 @@ sub allFeed {
 		my $last = $skip + $quantity - 1;
 		$last = $#$items_ref if $last > $#$items_ref;
 		my @window = $last >= $skip ? @$items_ref[ $skip .. $last ] : ();
+		my $no_cover = grep { !($_->{cover} || '') } @window;
+		$log->debug("Ximalaya: category $catId window=$index+$quantity -> "
+			. scalar(@window) . " row(s), without-cover=$no_cover");
 		$cb->({
 			items  => [ map { Plugins::Ximalaya::Plugin::albumItem($_) } @window ],
 			offset => $index,

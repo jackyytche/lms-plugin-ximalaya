@@ -191,6 +191,17 @@ sub _norm_cover {
 	$c =~ s{^//}{https://};
 	$c = 'https://imagev2.xmcdn.com/' . $c if $c !~ m{^https?://};
 	$c =~ s{^http://}{https://};
+	# 0.1.52: drop the CDN processing directive that some feeds append after the
+	# file extension - e.g. //imagev2.xmcdn.com/storages/x/cover.jpeg
+	# !op_type=0&magick=webp&unlimited=0 (the web category feed) or
+	# !op_type=3&columns=290&rows=290&magick=png (favourites). Those URLs ARE
+	# servable, but they are the ONLY cover form in the plugin that carries an
+	# ampersand and asks the CDN for webp; the cover forms that demonstrably
+	# render in the Daphile UI (rank charts: bare storages/..., album/simple:
+	# //imagev2.../x.jpeg) are all plain. Stripping the directive yields exactly
+	# that plain original upload. Applies only when the directive follows a file
+	# extension, so ordinary paths are untouched.
+	$c =~ s{(![^/]*)$}{} if $c =~ m{\.\w+!};
 	return $c;
 }
 

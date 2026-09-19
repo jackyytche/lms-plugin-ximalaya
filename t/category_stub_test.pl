@@ -245,5 +245,24 @@ check('empty: returns (undef, empty)',              !defined $r[0] && $r[1] eq '
 		&& ($out->{items}[0]{name} || '') eq 'PLUGIN_XIMALAYA_ERR_CATEGORY');
 }
 
+# ------------------------------------------- 0.1.52 cover directive stripping
+# Some feeds append a CDN processing directive after the extension
+# (!op_type=0&magick=webp&unlimited=0 on the web category feed). Those URLs are
+# the only cover form the plugin hands out that carries an ampersand / asks for
+# webp, while every form that renders in the Daphile UI is plain - so the
+# directive is stripped and the plain original is served.
+{
+	my $api = 'Plugins::Ximalaya::API';
+	check('0.1.52: category-feed cover directive stripped to the plain original',
+		$api->_norm_cover('//imagev2.xmcdn.com/storages/a/b.jpeg!op_type=0&magick=webp&unlimited=0')
+			eq 'https://imagev2.xmcdn.com/storages/a/b.jpeg');
+	check('0.1.52: favourites cover directive stripped; plain forms untouched',
+		$api->_norm_cover('//imagev2.xmcdn.com/s/c.png!op_type=3&columns=290&rows=290&magick=png')
+			eq 'https://imagev2.xmcdn.com/s/c.png'
+		&& $api->_norm_cover('storages/x/y.jpeg') eq 'https://imagev2.xmcdn.com/storages/x/y.jpeg'
+		&& $api->_norm_cover('https://a/b/plain.jpg') eq 'https://a/b/plain.jpg'
+		&& $api->_norm_cover('http://a/b/old.jpg') eq 'https://a/b/old.jpg');
+}
+
 print $fail ? "\nCATEGORY STUB TESTS FAILED\n" : "\nALL CATEGORY STUB TESTS PASSED ($n)\n";
 exit($fail ? 1 : 0);

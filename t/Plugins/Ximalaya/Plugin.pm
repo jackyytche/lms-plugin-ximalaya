@@ -577,8 +577,20 @@ sub albumHandler {
 
 	$render = sub {
 		my ($tracks, $total, $offset) = @_;
-		$log->debug("Ximalaya: albumHandler album=$albumId idx=$index window=$window got "			. scalar(@$tracks) . " tracks at offset=$offset"
-			. (defined $total ? " of $total" : ''));
+		# 0.1.52: a track row must never come out without artwork. Some tiers
+		# hand out entries with no cover path; the ALBUM cover is the honest
+		# fallback - it is already in hand (passthrough from the album row) and
+		# it is also what the queue publication would carry for that track.
+		if ($albumCover) {
+			for my $t (@$tracks) {
+				$t->{cover} = $albumCover if !$t->{cover};
+			}
+		}
+		my $no_cover = grep { !($_->{cover} || '') } @$tracks;
+		$log->debug("Ximalaya: albumHandler album=$albumId idx=$index window=$window got "
+			. scalar(@$tracks) . " tracks at offset=$offset"
+			. (defined $total ? " of $total" : '')
+			. ", without-cover=$no_cover");
 		my $n = 0;
 		my @items = map { trackItem(++$n + $offset, $_) } @$tracks;
 		# 0.1.42: header artwork source - album cover first, track cover as
